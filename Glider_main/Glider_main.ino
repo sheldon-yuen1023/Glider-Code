@@ -1,5 +1,3 @@
-// Ready to pull request
-
 #include "Orientation.h"
 void setup() {
   Serial.begin(115200);
