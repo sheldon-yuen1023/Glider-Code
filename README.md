@@ -1,4 +1,4 @@
-# UCL Underwater Glider – Arduino-Based Subsystem Testing
+# UCL Underwater Glider – Arduino-Based Autonomous Test Vehicle
 
 This repository contains the **early-stage control and diagnostic software** for the **UCL Underwater Glider project**, written using the **Arduino framework in C++**. The codebase is designed to support **tethered testing** of onboard subsystems prior to full autonomous integration.
 
@@ -10,7 +10,7 @@ The UCL Underwater Glider is a student-led initiative focused on building a **mo
 - Distributed microcontroller-based subsystem management
 - Sensor-rich navigation and control
 
-This repository supports **tethered bench testing** of core components and subsystems, ensuring robust performance and calibration before open-water trials.
+This repository supports **tethered bench and field testing** of core components and subsystems, ensuring robust performance and calibration before open-water trials.
 
 ## 📁 Repository Structure
 
