@@ -1,3 +1,7 @@
+/**
+!!! MAKE SURE THAT THE VOLTAGE FAILSAFE AND TEMPERATURE FAILSAFE ARE SET CORRECTLY BEFORE FLASHING !!!
+*/
+
 #include <Wire.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
