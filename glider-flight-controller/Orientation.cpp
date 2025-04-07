@@ -9,20 +9,18 @@ LSM6 imu;
 LIS3MDL mag;
 Adafruit_Madgwick filter;
 
-float smoothedPitch = 0.0;
-float smoothedRoll = 0.0;
-float alpha = 0.6;
 unsigned long lastUpdate = 0;
 
 // === MAGNETOMETER OFFSETS ===
-float magOffsetX = -89.55;
-float magOffsetY = -95.90;
-float magOffsetZ = 117.60;
+float magOffsetX = 0;
+float magOffsetY = 0;
+float magOffsetZ = 0;
 // =============================
 
 void initOrientation() {
   delay(1000);
-  Wire.begin();
+  Wire.begin(6, 7);
+  Wire.setClock(800000);
 
   if (!imu.init()) {
     Serial.println("Failed to detect LSM6!");
@@ -36,52 +34,37 @@ void initOrientation() {
   }
   mag.enableDefault();
 
-  filter.begin(100); // 100 Hz
-  filter.setBeta(0.1);
-  lastUpdate = millis();
+  filter.begin(FILTER_UPDATE_RATE_HZ);
+  filter.setBeta(0.3);
+  lastUpdate = micros();
 
-  Serial.println("IMU Fusion Ready (Gyro + Accel) + Compass Heading");
+  Serial.println("IMU Fusion Ready (9DOF with Madgwick)");
 }
 
 void getOrientation(float& pitch, float& roll, float& yaw) {
   imu.read();
   mag.read();
 
-  unsigned long now = millis();
-  float dt = (now - lastUpdate) / 1000.0;
+  unsigned long now = micros();
+  float dt = (now - lastUpdate) / 10000000.0f;
+  if (dt <= 0.0f || dt > 0.5f) dt = 1.0f / FILTER_UPDATE_RATE_HZ;
   lastUpdate = now;
 
-  float ax = imu.a.x * 9.81 / 1000.0;
-  float ay = imu.a.y * 9.81 / 1000.0;
-  float az = imu.a.z * 9.81 / 1000.0;
+  float ax = imu.a.x / 1000.0f;
+  float ay = imu.a.y / 1000.0f;
+  float az = imu.a.z / 1000.0f;
 
-  float gx = imu.g.x * 0.001 * PI / 180.0;
-  float gy = imu.g.y * 0.001 * PI / 180.0;
-  float gz = imu.g.z * 0.001 * PI / 180.0;
+  float gx = imu.g.x * 0.001f * PI / 180.0f;
+  float gy = imu.g.y * 0.001f * PI / 180.0f;
+  float gz = imu.g.z * 0.001f * PI / 180.0f;
 
-  filter.updateIMU(gx, gy, gz, ax, ay, az);
+  float mx = (mag.m.x * 0.1f) - magOffsetX;
+  float my = (mag.m.y * 0.1f) - magOffsetY;
+  float mz = (mag.m.z * 0.1f) - magOffsetZ;
 
-  float rawPitch = filter.getPitch();
-  float rawRoll  = filter.getRoll();
+  filter.update(gx, gy, gz, ax, ay, az, mx, my, mz);
 
-  smoothedPitch = alpha * smoothedPitch + (1 - alpha) * rawPitch;
-  smoothedRoll  = alpha * smoothedRoll + (1 - alpha) * rawRoll;
-
-  // Apply magnetometer offset correction
-  float mx = (mag.m.x * 0.1) - magOffsetX;
-  float my = (mag.m.y * 0.1) - magOffsetY;
-  float mz = (mag.m.z * 0.1) - magOffsetZ;
-
-  float pitchRad = smoothedPitch * PI / 180.0;
-  float rollRad  = smoothedRoll  * PI / 180.0;
-
-  float mx_comp = mx * cos(pitchRad) + mz * sin(pitchRad);
-  float my_comp = mx * sin(rollRad) * sin(pitchRad) + my * cos(rollRad) - mz * sin(rollRad) * cos(pitchRad);
-
-  float heading = atan2(-my_comp, mx_comp) * 180.0 / PI;
-  if (heading < 0) heading += 360.0;
-
-  pitch = smoothedPitch;
-  roll = smoothedRoll;
-  yaw = heading;
+  pitch = filter.getPitch();
+  roll = filter.getRoll();
+  yaw = filter.getYaw();
 }

@@ -1,9 +1,9 @@
 #ifndef ORIENTATION_H
 #define ORIENTATION_H
 
-#include <Arduino.h>
+// Set your desired filter update rate in Hz (e.g. 100, 200)
+#define FILTER_UPDATE_RATE_HZ 1000
 
-// Function declarations
 void initOrientation();
 void getOrientation(float& pitch, float& roll, float& yaw);
 
