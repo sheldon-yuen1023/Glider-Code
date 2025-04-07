@@ -4,7 +4,7 @@ unsigned long lastOrientationUpdate = 0;
 const unsigned long updateInterval = 1000000 / FILTER_UPDATE_RATE_HZ;
 
 unsigned long lastPrintTime = 0;
-const unsigned long printInterval = 100000; // 1 second in microseconds
+const unsigned long printInterval = 50000; // 1 Hz print rate
 
 void setup() {
   Serial.begin(115200);
@@ -27,5 +27,5 @@ void loop() {
     }
   }
 
-  // Other tasks can run here
+  // Add other tasks here
 }
