@@ -1,9 +1,8 @@
 #ifndef ORIENTATION_H
 #define ORIENTATION_H
 
-#include <Arduino.h>
+#define FILTER_UPDATE_RATE_HZ 300
 
-// Function declarations
 void initOrientation();
 void getOrientation(float& pitch, float& roll, float& yaw);
 
