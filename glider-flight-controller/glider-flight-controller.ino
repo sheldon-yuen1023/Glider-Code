@@ -1,17 +1,29 @@
 #include "Orientation.h"
+
+unsigned long lastOrientationUpdate = 0;
+const unsigned long updateInterval = 1000000 / FILTER_UPDATE_RATE_HZ;
+
+unsigned long lastPrintTime = 0;
+const unsigned long printInterval = 50000; // 1 Hz
+
 void setup() {
   Serial.begin(115200);
+  while (!Serial);
   initOrientation();
 }
 
 void loop() {
-  float pitch, roll, yaw;
-  getOrientation(pitch, roll, yaw);
+  unsigned long now = micros();
 
-  Serial.print("Pitch: "); Serial.print(pitch, 2);
-  Serial.print("°, Roll: "); Serial.print(roll, 2);
-  Serial.print("°, Heading: "); Serial.print(yaw, 2);
-  Serial.println("°");
+  if (now - lastOrientationUpdate >= updateInterval) {
+    lastOrientationUpdate = now;
 
-  delay(20);
+    float pitch, roll, yaw;
+    getOrientation(pitch, roll, yaw);
+
+    if (now - lastPrintTime >= printInterval) {
+      lastPrintTime = now;
+      Serial.printf("Pitch: %.2f°, Roll: %.2f°, Yaw: %.2f°\n", pitch, roll, yaw);
+    }
+  }
 }
