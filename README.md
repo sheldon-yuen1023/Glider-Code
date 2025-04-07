@@ -28,11 +28,21 @@ Full code for the **custom battery management system**, running on a **Seeed Stu
 - Emergency condition logging and reporting
 
 ### `glider-flight-controller/`
-Core control code for the glider’s **main flight computer**. This module will coordinate:
+Core code for the glider’s **main flight computer**, currently focused on reading IMU data and estimating 3D orientation in real time. This module will eventually coordinate:
 - Buoyancy control
 - Pitch and roll actuation
-- IMU-based attitude sensing
-- Mission logic (eventually autonomous)
+- IMU-based attitude estimation
+- Mission and navigation logic
+
+#### Key files:
+- **`main.ino`** – The main runtime loop. Handles timing and schedules orientation updates and serial output. Acts as the entry point for the program.
+- **`Orientation.h / Orientation.cpp`** – Interface and implementation for initializing the IMU (accelerometer, gyroscope, magnetometer), reading sensor data, and passing it to the orientation filter.
+- **`KalmanOrientation.h / KalmanOrientation.cpp`** – A lightweight, custom 9DOF orientation filter using a complementary Kalman-style approach. Fuses accelerometer, gyroscope, and magnetometer data to estimate **pitch**, **roll**, and **yaw**.
+  - Tunable for responsiveness via a single `beta` parameter.
+  - Designed to be modular and easy to replace or expand later (e.g. full Kalman, quaternion-based filters, etc.)
+
+> 🔧 All orientation angles returned by the filter are in **degrees** and updated at a consistent rate defined by `FILTER_UPDATE_RATE_HZ`.
+
 
 ## 🧰 Development Notes
 
