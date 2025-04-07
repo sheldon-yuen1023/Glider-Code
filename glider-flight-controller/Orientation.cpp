@@ -4,84 +4,110 @@
 #include <LSM6.h>       // Accelerometer + Gyroscope
 #include <LIS3MDL.h>     // Magnetometer
 
-// IMU sensor instances
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+
+// Sensor instances
 LSM6 imu;
 LIS3MDL mag;
-
-// Orientation filter instance
 KalmanOrientation kalman;
 
-// Tracks time between updates (in microseconds)
-unsigned long lastUpdate = 0;
+// Shared filtered orientation values
+volatile float sharedPitch = 0;
+volatile float sharedRoll = 0;
+volatile float sharedYaw = 0;
 
-// Magnetometer offsets for basic hard-iron correction (calibrate manually if needed)
+// Thread-safe lock for shared values
+SemaphoreHandle_t orientationMutex;
+
+// Optional magnetometer offset correction
 float magOffsetX = 0;
 float magOffsetY = 0;
 float magOffsetZ = 0;
 
-// Initializes I2C, IMU sensors, and orientation filter
-void initOrientation() {
-  delay(1000);                // Allow time for sensors to power up
-  Wire.begin(6, 7);           // Start I2C using GPIO 6 (SDA) and 7 (SCL)
-  Wire.setClock(800000);      // Use 800 kHz I2C for faster communication
+// FreeRTOS task that handles IMU read + Kalman filtering (runs on Core 0)
+void orientationTask(void* parameter) {
+  unsigned long lastUpdate = micros();
 
-  // Initialize accelerometer + gyroscope
+  while (true) {
+    imu.read();
+    mag.read();
+
+    unsigned long now = micros();
+    float dt = (now - lastUpdate) / 1000000.0f;
+    if (dt <= 0.0f || dt > 0.5f) dt = 1.0f / FILTER_UPDATE_RATE_HZ;
+    lastUpdate = now;
+
+    float ax = imu.a.x / 1000.0f;
+    float ay = imu.a.y / 1000.0f;
+    float az = imu.a.z / 1000.0f;
+
+    float gx = imu.g.x * 0.001f * PI / 180.0f;
+    float gy = imu.g.y * 0.001f * PI / 180.0f;
+    float gz = imu.g.z * 0.001f * PI / 180.0f;
+
+    float mx = (mag.m.x * 0.1f) - magOffsetX;
+    float my = (mag.m.y * 0.1f) - magOffsetY;
+    float mz = (mag.m.z * 0.1f) - magOffsetZ;
+
+    kalman.update(ax, ay, az, gx, gy, gz, mx, my, mz, dt);
+
+    // Update shared orientation values safely
+    if (xSemaphoreTake(orientationMutex, 0) == pdTRUE) {
+      sharedPitch = kalman.getPitch();
+      sharedRoll  = kalman.getRoll();
+      sharedYaw   = kalman.getYaw();
+      xSemaphoreGive(orientationMutex);
+    }
+
+    // Delay to maintain update frequency
+    delayMicroseconds(1000000 / FILTER_UPDATE_RATE_HZ);
+  }
+}
+
+// Call this in setup() to initialize sensors and start the filter task
+void initOrientation() {
+  delay(1000);
+  Wire.begin(6, 7);          // Replace with your board's SDA, SCL pins
+  Wire.setClock(800000);     // Fast I2C for high IMU polling rate
+
   if (!imu.init()) {
     Serial.println("Failed to detect LSM6!");
-    while (1); // Stop if sensor is not detected
+    while (1);
   }
   imu.enableDefault();
 
-  // Initialize magnetometer
   if (!mag.init()) {
     Serial.println("Failed to detect LIS3MDL magnetometer!");
-    while (1); // Stop if sensor is not detected
+    while (1);
   }
   mag.enableDefault();
 
-  // Initialize Kalman-style orientation filter
-  kalman.begin(0.05); // beta = 0.05 → balance between responsiveness and stability
+  kalman.begin(0.05); // Filter responsiveness: 0.01–0.1 typical range
+  orientationMutex = xSemaphoreCreateMutex();
 
-  lastUpdate = micros(); // Timestamp for first update
+  // Launch IMU fusion task on Core 0
+  xTaskCreatePinnedToCore(
+    orientationTask,      // Task function
+    "OrientationTask",    // Name
+    4096,                 // Stack size
+    NULL,                 // Params
+    1,                    // Priority
+    NULL,                 // Task handle
+    0                     // Run on Core 0
+  );
 
-  Serial.println("Kalman-based IMU Orientation (9DOF) ready.");
+  Serial.println("Orientation task started on Core 0.");
 }
 
-// Reads sensor values, updates orientation estimate, and outputs pitch/roll/yaw
+// Thread-safe accessor for current orientation
 void getOrientation(float& pitch, float& roll, float& yaw) {
-  imu.read();  // Get accelerometer and gyroscope data
-  mag.read();  // Get magnetometer data
-
-  // Compute time since last update (in seconds)
-  unsigned long now = micros();
-  float dt = (now - lastUpdate) / 1000000.0f;
-  
-  // Clamp unreasonable time deltas (e.g., after reset or overflow)
-  if (dt <= 0.0f || dt > 0.5f) {
-    dt = 1.0f / FILTER_UPDATE_RATE_HZ;
+  if (xSemaphoreTake(orientationMutex, 0) == pdTRUE) {
+    pitch = sharedPitch;
+    roll  = sharedRoll;
+    yaw   = sharedYaw;
+    xSemaphoreGive(orientationMutex);
   }
-  lastUpdate = now;
-
-  // Convert raw accelerometer values (mg → g)
-  float ax = imu.a.x / 1000.0f;
-  float ay = imu.a.y / 1000.0f;
-  float az = imu.a.z / 1000.0f;
-
-  // Convert raw gyroscope values (mdps → rad/s)
-  float gx = imu.g.x * 0.001f * PI / 180.0f;
-  float gy = imu.g.y * 0.001f * PI / 180.0f;
-  float gz = imu.g.z * 0.001f * PI / 180.0f;
-
-  // Convert raw magnetometer values (mgauss → µT), apply offsets
-  float mx = (mag.m.x * 0.1f) - magOffsetX;
-  float my = (mag.m.y * 0.1f) - magOffsetY;
-  float mz = (mag.m.z * 0.1f) - magOffsetZ;
-
-  // Update orientation estimate using all 9 sensor axes
-  kalman.update(ax, ay, az, gx, gy, gz, mx, my, mz, dt);
-
-  // Return angles in degrees
-  pitch = kalman.getPitch();
-  roll  = kalman.getRoll();
-  yaw   = kalman.getYaw();
 }
+  

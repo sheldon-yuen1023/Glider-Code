@@ -1,15 +1,12 @@
 #ifndef ORIENTATION_H
 #define ORIENTATION_H
 
-// Defines how often the orientation filter should update (in Hz).
-// This value should match the rate you're calling getOrientation().
-#define FILTER_UPDATE_RATE_HZ 200
+#define FILTER_UPDATE_RATE_HZ 200  // Target filter update rate in Hz
 
-// Call this once in setup() to initialize sensors and the orientation filter.
+// Call once in setup() to initialize I2C, sensors, and start orientation filter task
 void initOrientation();
 
-// Call this repeatedly (e.g. every 5 ms) to get the latest pitch, roll, and yaw angles.
-// Outputs are in degrees.
+// Thread-safe function to retrieve the latest filtered pitch, roll, and yaw (in degrees)
 void getOrientation(float& pitch, float& roll, float& yaw);
 
 #endif
