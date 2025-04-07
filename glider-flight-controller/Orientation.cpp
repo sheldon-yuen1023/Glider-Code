@@ -35,7 +35,7 @@ void initOrientation() {
   mag.enableDefault();
 
   filter.begin(FILTER_UPDATE_RATE_HZ);
-  filter.setBeta(0.3);
+  filter.setBeta(0.3); //THIS CAN BE CHANGED TO SPEED THE FILTER CONVERGENCE AT THE COST OF STEADY STATE OSCILLATIONS
   lastUpdate = micros();
 
   Serial.println("IMU Fusion Ready (9DOF with Madgwick)");
@@ -46,7 +46,7 @@ void getOrientation(float& pitch, float& roll, float& yaw) {
   mag.read();
 
   unsigned long now = micros();
-  float dt = (now - lastUpdate) / 10000000.0f;
+  float dt = (now - lastUpdate) / 1000000.0f;
   if (dt <= 0.0f || dt > 0.5f) dt = 1.0f / FILTER_UPDATE_RATE_HZ;
   lastUpdate = now;
 
@@ -63,6 +63,7 @@ void getOrientation(float& pitch, float& roll, float& yaw) {
   float mz = (mag.m.z * 0.1f) - magOffsetZ;
 
   filter.update(gx, gy, gz, ax, ay, az, mx, my, mz);
+  //filter.update(gx, gy, gz, ax, ay, az);
 
   pitch = filter.getPitch();
   roll = filter.getRoll();
