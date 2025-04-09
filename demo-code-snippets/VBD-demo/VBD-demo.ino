@@ -12,18 +12,17 @@
 #define ENC_IDX_PIN 14        // Optional: Encoder Index
 
 volatile long encoderCount = 0;         // Global encoder pulse count
-const int countsPerRevolution = 1024;     // Encoder resolution (counts per revolution)
+const int countsPerRevolution = 159744;     // Encoder resolution (counts per complete revolution)
 
-// Motor forward rotation target (in rotations)
-// (NOTE: Adjust this to a realistic value; the example uses a large number.)
-const float TARGET_ROTATIONS = 200000.0;
+// Motor forward revolution target (in complete revolutions)
+const int TARGET_REVOLUTIONS = 10;  // Set target to 10 complete revolutions
 
 // Motion profile parameters (tweak these to suit your hardware)
 const float MAX_DUTY_FORWARD = 80.0;    // Maximum duty cycle (forward motion)
-const float MAX_DUTY_REVERSE = 30.0;    // Maximum duty cycle (reverse motion)
-const float ACCEL_STEP = 5.0;           // PWM duty cycle increment per control loop (approx. every 100ms)
-const float DECEL_STEP = 5.0;           // PWM duty cycle decrement per control loop
-const float DECELERATION_ROTATIONS = 10.0;  // When within this many rotations of target, start deceleration
+const float MAX_DUTY_REVERSE = 30.0;      // Maximum duty cycle (reverse motion)
+const float ACCEL_STEP = 5.0;             // PWM duty cycle increment per control loop (~100ms)
+const float DECEL_STEP = 5.0;             // PWM duty cycle decrement per control loop
+const float DECELERATION_WINDOW = 1.0;    // Start deceleration when within 1 revolution of target
 
 // Global variable to track the current PWM duty cycle
 float currentDuty = 0.0;
@@ -31,13 +30,13 @@ float currentDuty = 0.0;
 // Define a simple state machine for motor control
 enum MotorState {
   REVERSING,      // Motor runs in reverse until the limit switch is pressed
-  MOVING_FORWARD, // Motor runs forward until target rotations are reached
+  MOVING_FORWARD, // Motor runs forward until target complete revolutions are reached
   STOPPED         // Motor stops once the target is met
 };
 
 MotorState motorState = REVERSING;
 
-// Encoder ISR: counts pulses and determines direction based on Channel B state.
+// Encoder ISR: Counts pulses and determines direction based on Channel B state.
 void IRAM_ATTR encoderISR() {
   int bState = digitalRead(ENC_B_PIN);
   if (bState == HIGH) {
@@ -50,12 +49,12 @@ void IRAM_ATTR encoderISR() {
 void setup() {
   Serial.begin(115200);
 
-  // Setup motor control pin; also set the limit switch input (internal pullup)
+  // Setup motor control pin and limit switch input (with internal pullup)
   pinMode(PH_PIN, OUTPUT);
   pinMode(LIMIT_SWITCH_PIN, INPUT_PULLUP);
   
   // Start with the motor in reverse mode.
-  // In this configuration, assume:
+  // In this configuration:
   //   - PH_PIN HIGH selects reverse
   //   - PH_PIN LOW selects forward.
   digitalWrite(PH_PIN, HIGH);
@@ -63,10 +62,10 @@ void setup() {
   // Initialize MCPWM for motor speed control with a 5 kHz frequency.
   mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, EN_PIN);
   mcpwm_config_t pwm_config;
-  pwm_config.frequency = 5000;        
-  // Start at 0% duty cycle for a smooth acceleration.
+  pwm_config.frequency = 5000;
+  // Start at 0% duty cycle for smooth acceleration.
   pwm_config.cmpr_a = 0.0;
-  pwm_config.cmpr_b = 0.0;            
+  pwm_config.cmpr_b = 0.0;
   pwm_config.counter_mode = MCPWM_UP_COUNTER;
   pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
   mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);
@@ -76,7 +75,7 @@ void setup() {
   pinMode(ENC_B_PIN, INPUT_PULLUP);
   pinMode(ENC_IDX_PIN, INPUT_PULLUP);  // Optional if you use the index pulse
 
-  // Attach interrupt on the rising edge of the encoder Channel A.
+  // Attach an interrupt on the rising edge of encoder Channel A.
   attachInterrupt(digitalPinToInterrupt(ENC_A_PIN), encoderISR, RISING);
 
   // Optional short delay for startup stabilization.
@@ -89,7 +88,7 @@ void loop() {
     // Ensure the motor is in reverse (PH_PIN HIGH selects reverse).
     digitalWrite(PH_PIN, HIGH);
     
-    // Ramp up the reverse speed gradually until the target reverse duty is reached.
+    // Gradually ramp up the reverse speed until MAX_DUTY_REVERSE is reached.
     if (currentDuty < MAX_DUTY_REVERSE) {
       currentDuty += ACCEL_STEP;
       if (currentDuty > MAX_DUTY_REVERSE) {
@@ -99,7 +98,7 @@ void loop() {
     // Set the PWM duty cycle.
     mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, currentDuty);
     
-    // Check the limit switch: if it reads HIGH, the limit switch is pressed.
+    // Check limit switch: if it reads HIGH, the limit switch is pressed.
     if (digitalRead(LIMIT_SWITCH_PIN) == HIGH) {
       // When pressed, reset the encoder count atomically.
       noInterrupts();
@@ -108,41 +107,42 @@ void loop() {
       
       Serial.println("Limit switch pressed. Encoder reset. Changing direction to FORWARD.");
       
-      // Reset the duty cycle so that forward acceleration starts from zero.
+      // Reset duty cycle so forward acceleration starts from zero.
       currentDuty = 0.0;
       
-      // Change the motor direction to forward (PH_PIN LOW selects forward).
+      // Change motor direction to forward (PH_PIN LOW selects forward).
       digitalWrite(PH_PIN, LOW);
       
       // Transition to the MOVING_FORWARD state.
       motorState = MOVING_FORWARD;
     }
   }
-  // --- MOVING_FORWARD STATE: Accelerate forward and decelerate as target rotations are neared ---
+  // --- MOVING_FORWARD STATE: Accelerate forward and decelerate as target is neared ---
   else if (motorState == MOVING_FORWARD) {
-    // Compute the number of rotations since the encoder was reset.
-    float rotations = (float)encoderCount / countsPerRevolution;
-    Serial.print("Forward Rotations: ");
-    Serial.println(rotations);
+    // Calculate revolutions as a floating point value.
+    float revolutions = (float)encoderCount / countsPerRevolution;
+    // Calculate complete revolutions (the integer number of full revolutions completed).
+    int completeRevolutions = (int)revolutions;
+    Serial.print("Complete Revolutions: ");
+    Serial.println(completeRevolutions);
+    
+    // Calculate remaining revolutions (as a float) to start deceleration.
+    float remainingRevolutions = TARGET_REVOLUTIONS - revolutions;
     
     // Determine the target PWM duty cycle based on progress.
     float targetDuty;
-    float remainingRotations = TARGET_ROTATIONS - rotations;
-    
-    // Start deceleration when within a specified number of rotations from the target.
-    if (remainingRotations <= DECELERATION_ROTATIONS) {
-      // Linearly scale the target duty from full speed down to a low value
-      targetDuty = (remainingRotations / DECELERATION_ROTATIONS) * MAX_DUTY_FORWARD;
-      // Optionally, enforce a minimum duty cycle (if not yet zero) to prevent stalling.
-      if (targetDuty < 10.0 && remainingRotations > 0) {
+    if (remainingRevolutions <= DECELERATION_WINDOW) {
+      // Linearly scale the target duty down to a minimum value as the target is reached.
+      targetDuty = (remainingRevolutions / DECELERATION_WINDOW) * MAX_DUTY_FORWARD;
+      // Optionally, set a minimum duty if still in motion (to prevent stalling).
+      if (targetDuty < 10.0 && remainingRevolutions > 0) {
         targetDuty = 10.0;
       }
     } else {
-      // Otherwise, aim for maximum forward speed.
       targetDuty = MAX_DUTY_FORWARD;
     }
     
-    // Adjust the current duty cycle gradually towards the computed target.
+    // Adjust the current duty cycle gradually toward the target.
     if (currentDuty < targetDuty) {
       currentDuty += ACCEL_STEP;
       if (currentDuty > targetDuty)
@@ -156,11 +156,11 @@ void loop() {
     // Apply the updated PWM duty cycle.
     mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, currentDuty);
     
-    // When the forward rotations reach or exceed the target, stop the motor.
-    if (rotations >= TARGET_ROTATIONS) {
+    // Stop the motor if the number of complete revolutions reaches or exceeds the target.
+    if (completeRevolutions >= TARGET_REVOLUTIONS) {
       mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, 0.0);
       motorState = STOPPED;
-      Serial.println("Target rotations reached. Motor stopped.");
+      Serial.println("Target complete revolutions reached. Motor stopped.");
     }
   }
   // --- STOPPED STATE ---
