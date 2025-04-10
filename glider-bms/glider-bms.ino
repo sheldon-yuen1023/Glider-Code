@@ -9,7 +9,7 @@
 // === CONFIGURATION SECTION ===
 
 // OneWire DS18B20 temperature sensor pin
-#define ONE_WIRE_BUS 10  // GPIO10 (D10 on XIAO)
+#define ONE_WIRE_BUS 8  // GPIO10 (D10 on XIAO)
 
 // INA228 I2C battery monitor configuration
 #define INA228_ADDR 0x45           // I2C address of INA228
@@ -23,7 +23,7 @@
 #define I2C_SCL 7
 
 // Power relay (DFRobot Gravity MOSFET control)
-#define MOSFET_PIN 2  // GPIO2 controls MOSFET output relay
+#define MOSFET_PIN 5  // GPIO2 controls MOSFET output relay
 
 // Safety thresholds
 #define CURRENT_LIMIT 15.0   // Max allowed current in Amps
