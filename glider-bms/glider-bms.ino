@@ -1,236 +1,295 @@
 /**
-!!! MAKE SURE THAT THE VOLTAGE FAILSAFE AND TEMPERATURE FAILSAFE ARE SET CORRECTLY BEFORE FLASHING !!!
-*/
+ * Battery Management System with CAN Broadcast
+ * - Reads battery voltage and current via INA228 (I2C)
+ * - Reads temperatures via DS18B20 (1-Wire)
+ * - Evaluates safety conditions (init or runtime)
+ * - Sends compact status packets over CAN bus using ESP32-C3 TWAI (TX=21, RX=20)
+ *
+ * !!! MAKE SURE THAT VOLTAGE AND TEMPERATURE FAILSAFE VALUES ARE SET CORRECTLY BEFORE FLASHING !!!
+ */
 
 #include <Wire.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <driver/twai.h>  // TWAI = CAN protocol driver
 
-// === CONFIGURATION SECTION ===
+// ============================== CONFIGURATION ==============================
 
-// OneWire DS18B20 temperature sensor pin
-#define ONE_WIRE_BUS 8  // GPIO10 (D10 on XIAO)
+// Pin mappings and sensor-specific parameters
+#define I2C_SDA 6                      // I2C SDA pin
+#define I2C_SCL 7                      // I2C SCL pin
+#define INA228_ADDR 0x45              // INA228 I2C address
+#define REG_BUS_VOLTAGE 0x05          // INA228 voltage register
+#define REG_CURRENT 0x04              // INA228 current register
+#define CURRENT_LSB 2.4414e-5         // Conversion factor for current (A/bit)
+#define VOLTAGE_DIVIDER_RATIO 10.0    // Hardware voltage divider ratio
+#define ONE_WIRE_BUS 8                // DS18B20 1-Wire data pin
+#define MOSFET_PIN 5                  // GPIO to control MOSFET/relay
+#define CAN_TX_PIN 21                 // CAN TX pin
+#define CAN_RX_PIN 20                 // CAN RX pin
 
-// INA228 I2C battery monitor configuration
-#define INA228_ADDR 0x45           // I2C address of INA228
-#define REG_BUS_VOLTAGE 0x05       // Register for bus voltage
-#define REG_CURRENT 0x04           // Register for current
-#define CURRENT_LSB 2.4414e-5      // Current LSB in Amps (204.8A full scale)
-#define VOLTAGE_DIVIDER_RATIO 10.0 // Voltage divider ratio used on battery input
+// Safety limits
+#define CURRENT_LIMIT 15.0            // Max allowable current (A)
+#define VOLTAGE_MIN 0                 // Minimum safe voltage (V)
+#define TEMP_LIMIT_C 40.0             // Maximum safe temperature (°C)
+#define BMS_NODE_ID 1                 // Unique BMS identifier on CAN bus
 
-// I2C pin configuration for ESP32-C3 XIAO
-#define I2C_SDA 6
-#define I2C_SCL 7
+// Timers for update loops
+#define SENSOR_UPDATE_INTERVAL 1000   // Time between sensor reads (ms)
+#define CAN_SEND_INTERVAL 5000        // Time between CAN broadcasts (ms)
 
-// Power relay (DFRobot Gravity MOSFET control)
-#define MOSFET_PIN 5  // GPIO2 controls MOSFET output relay
-
-// Safety thresholds
-#define CURRENT_LIMIT 15.0   // Max allowed current in Amps
-#define VOLTAGE_MIN 0        // Min allowed voltage in Volts
-#define TEMP_LIMIT_C 40.0    // Max allowed temperature in Celsius
-
-// === GLOBAL VARIABLES ===
-
-OneWire oneWire(ONE_WIRE_BUS);              // OneWire interface for DS18B20 sensors
-DallasTemperature sensors(&oneWire);        // DallasTemperature library wrapper
-float* temperatures = nullptr;              // Dynamic array to store temperature values
-int sensorCount = 0;                        // Number of connected DS18B20 sensors
-
-// Safety status flags
-bool battery_overheated = false;
-bool overcurrent = false;
-bool battery_discharged = false;
-bool ina_disconnected = false;
-bool emergency_triggered = false;
-
-// === SETUP FUNCTION ===
+// ============================== STATUS ENUM ==============================
 
 /**
- * setup()
- * Initializes all sensors and systems:
- * - Serial output
- * - I2C and OneWire interfaces
- * - Power relay control
- * - Sensor availability with timeout failsafe
+ * Enumerated list of BMS error/status codes for internal logic and CAN transmission.
  */
+enum BMSStatus : uint8_t {
+  STATUS_OK = 1,                      // System operating normally
+  STATUS_INIT_FAIL = 2,              // Startup/init failure of sensors
+  STATUS_OVERCURRENT = 3,            // Current exceeded safe threshold
+  STATUS_DISCHARGED = 4,             // Voltage below minimum safe level
+  STATUS_OVERTEMP = 5,               // One or more temperatures exceeded limit
+  STATUS_TEMPERATURE_SENSOR_FAIL = 6, // Temperature sensors not responding
+  STATUS_CURRENT_SENSOR_FAIL = 7     // INA228 not responding
+};
+
+// ============================== GLOBALS ==============================
+
+unsigned long lastSensorUpdateTime = 0;     // Timestamp of last sensor read
+unsigned long lastCANSendTime = 0;          // Timestamp of last CAN message
+bool emergency_triggered = false;           // Emergency latch state
+bool emergency_reported = false;            // Ensure only one emergency report is printed
+uint8_t current_status = STATUS_OK;         // System status tracker
+
+OneWire oneWire(ONE_WIRE_BUS);              // 1-Wire bus instance
+DallasTemperature sensors(&oneWire);        // DallasTemperature sensor object
+float* temperatures = nullptr;              // Pointer to array of temperature readings
+int sensorCount = 0;                        // Number of detected DS18B20 sensors
+
+// Structure used to encode and transmit BMS status over CAN (8 bytes total)
+struct __attribute__((packed)) BMSMessage {
+  uint8_t bms_id;
+  uint8_t status;
+  uint8_t voltage;
+  uint8_t current;
+  uint16_t temp1_raw;
+  uint16_t temp2_raw;
+};
+
+// ============================== SETUP ==============================
+
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+  Serial.println("Initializing BMS Node...");
+
+  // Begin communication with sensors and peripherals
   Wire.begin(I2C_SDA, I2C_SCL);
   sensors.begin();
-
   pinMode(MOSFET_PIN, OUTPUT);
-  digitalWrite(MOSFET_PIN, HIGH);  // Turn relay ON at startup
+  digitalWrite(MOSFET_PIN, HIGH); // Enable power relay initially
 
-  delay(500);
-  Serial.println("Initializing system...");
+  // Basic presence check on sensors
+  bool tempReady = sensors.getDeviceCount() > 0;
+  bool inaReady = isINA228Available();
 
-  // Attempt to detect required sensors within 10 seconds
-  unsigned long startTime = millis();
-  bool tempReady = false;
-  bool inaReady = false;
-
-  while (millis() - startTime < 10000) {
-    if (!tempReady && sensors.getDeviceCount() > 0) tempReady = true;
-    if (!inaReady && isINA228Available()) inaReady = true;
-
-    if (tempReady && inaReady) break;
-
-    if (!tempReady) Serial.println("No DS18B20 temperature sensors detected.");
-    if (!inaReady) Serial.println("INA228 battery monitor not responding on I2C.");
-    delay(1000);
-    sensors.begin();  // Retry OneWire init
-  }
-
-  // Failsafe: one or more sensors missing
   if (!tempReady || !inaReady) {
-    Serial.println("\nFAILSAFE: Required sensors not detected after 10 seconds.");
-    digitalWrite(MOSFET_PIN, LOW);  // Turn OFF relay
-    while (true) delay(1000);       // Halt system
+    // If any sensor fails, enter INIT_FAIL emergency
+    current_status = STATUS_INIT_FAIL;
+    emergency_triggered = true;
+    digitalWrite(MOSFET_PIN, LOW); // Disable power relay immediately
+  } else {
+    sensorCount = sensors.getDeviceCount();
+    temperatures = new float[sensorCount];
   }
 
-  // Allocate temperature buffer and print sensor addresses
+  // Initialize CAN bus
+  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);
+  twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+  twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+  if (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK ||
+      twai_start() != ESP_OK) {
+    Serial.println("ERROR: Failed to initialize CAN bus.");
+    while (true) delay(1000);
+  }
+
+  Serial.println("CAN bus initialized.\n");
+}
+
+// ============================== MAIN LOOP ==============================
+
+void loop() {
+  if (emergency_triggered) {
+    digitalWrite(MOSFET_PIN, LOW);  // Ensure power remains off
+    reportEmergencyCause();         // Print failure reason once
+
+    // Transmit fault status over CAN at regular interval
+    if (millis() - lastCANSendTime >= CAN_SEND_INTERVAL) {
+      lastCANSendTime = millis();
+      sendCANStatusFrame();
+    }
+
+    delay(1000);  // Avoid spamming serial output
+    return;
+  }
+
+  unsigned long currentTime = millis();
+
+  // Periodic sensor updates
+  if (currentTime - lastSensorUpdateTime >= SENSOR_UPDATE_INTERVAL) {
+    lastSensorUpdateTime = currentTime;
+    updateTemperatures();
+    updatePowerReadings();
+    evaluateSystemHealth();  // Unified health check
+    if (!emergency_triggered) reportSystemStatus();
+  }
+
+  // Periodic CAN transmission
+  if (currentTime - lastCANSendTime >= CAN_SEND_INTERVAL) {
+    lastCANSendTime = currentTime;
+    sendCANStatusFrame();
+  }
+}
+
+// ============================== SAFETY & MONITORING ==============================
+
+/**
+ * Unified system health evaluator.
+ * Evaluates sensor presence and data limits and sets system emergency state.
+ */
+void evaluateSystemHealth() {
+  // Verify INA228 is still responsive
+  if (!isINA228Available()) {
+    current_status = STATUS_CURRENT_SENSOR_FAIL;
+    emergency_triggered = true;
+    digitalWrite(MOSFET_PIN, LOW);
+    return;
+  }
+
+  // Re-check for temperature sensors
   sensorCount = sensors.getDeviceCount();
-  temperatures = new float[sensorCount];
+  if (sensorCount == 0) {
+    current_status = STATUS_TEMPERATURE_SENSOR_FAIL;
+    emergency_triggered = true;
+    digitalWrite(MOSFET_PIN, LOW);
+    return;
+  }
 
-  Serial.print("DS18B20 sensor(s) detected: ");
-  Serial.println(sensorCount);
-
+  // Loop through each temperature and check thresholds
   for (int i = 0; i < sensorCount; i++) {
-    DeviceAddress addr;
-    if (sensors.getAddress(addr, i)) {
-      Serial.print("Sensor "); Serial.print(i); Serial.print(" address: ");
-      printAddress(addr);
-    } else {
-      Serial.print("Sensor "); Serial.print(i); Serial.println(" address not found!");
+    if (temperatures[i] >= TEMP_LIMIT_C || temperatures[i] == DEVICE_DISCONNECTED_C) {
+      current_status = STATUS_OVERTEMP;
+      emergency_triggered = true;
+      digitalWrite(MOSFET_PIN, LOW);
+      return;
     }
   }
 
-  Serial.println("INA228 battery monitor detected.");
-  Serial.println("System ready.");
-  Serial.println("------------------------");
-}
+  // Read power data and check thresholds
+  float voltage = readBusVoltage();
+  float current = readCurrent();
 
-// === MAIN LOOP FUNCTION ===
-
-/**
- * loop()
- * Continuously monitors:
- * - Temperatures from DS18B20 sensors
- * - Battery voltage and current from INA228
- * - INA228 presence (failsafe)
- * Responds to any fault by:
- * - Disabling relay
- * - Printing cause of emergency
- */
-void loop() {
-  // If already in emergency mode, repeatedly print cause
-  if (emergency_triggered) {
-    reportEmergencyCause();
-    delay(2000);
-    return;
-  }
-
-  // Check for I2C disconnect of INA228 during operation
-  if (!isINA228Available()) {
-    ina_disconnected = true;
+  if (voltage < VOLTAGE_MIN) {
+    current_status = STATUS_DISCHARGED;
     emergency_triggered = true;
     digitalWrite(MOSFET_PIN, LOW);
-    Serial.println("EMERGENCY CONDITION DETECTED! INA228 disconnected. Power disabled.");
     return;
   }
-
-  updateTemperatures();        // Read DS18B20 sensors
-  updatePowerReadings();       // Read INA228 voltage & current
-  evaluateSafetyConditions();  // Check thresholds
-
-  if (battery_overheated || battery_discharged || overcurrent) {
+  if (current > CURRENT_LIMIT) {
+    current_status = STATUS_OVERCURRENT;
     emergency_triggered = true;
-    digitalWrite(MOSFET_PIN, LOW);  // Disable relay
-    Serial.println("EMERGENCY CONDITION DETECTED! Power disabled.");
+    digitalWrite(MOSFET_PIN, LOW);
     return;
   }
 
-  reportSystemStatus();  // Normal status report
-  delay(2000);
+  // System is healthy
+  current_status = STATUS_OK;
 }
 
-// === MONITORING MODULES ===
-
 /**
- * updateTemperatures()
- * Requests temperature readings from each connected sensor
- * and stores in the global `temperatures[]` array.
+ * Request and store temperatures from DS18B20 sensors
  */
 void updateTemperatures() {
   sensors.requestTemperatures();
   for (int i = 0; i < sensorCount; i++) {
     float temp = sensors.getTempCByIndex(i);
     temperatures[i] = temp;
-    Serial.print("Temp"); Serial.print(i + 1); Serial.print(": ");
+    Serial.print("Temp"); Serial.print(i); Serial.print(": ");
     Serial.print(temp); Serial.println(" °C");
   }
 }
 
 /**
- * updatePowerReadings()
- * Reads battery voltage and current from INA228,
- * and updates the `overcurrent` and `battery_discharged` flags.
+ * Read and print voltage and current values
  */
 void updatePowerReadings() {
   float voltage = readBusVoltage();
   float current = readCurrent();
-
-  battery_discharged = (voltage < VOLTAGE_MIN);
-  overcurrent = (current > CURRENT_LIMIT);
-
   Serial.print("Voltage: "); Serial.print(voltage); Serial.println(" V");
   Serial.print("Current: "); Serial.print(current); Serial.println(" A");
 }
 
+// ============================== STATUS ==============================
+
 /**
- * evaluateSafetyConditions()
- * Checks the temperature array for overtemperature or disconnected sensors.
- * Sets `battery_overheated` flag if any issues are detected.
+ * Print normal operation status
  */
-void evaluateSafetyConditions() {
-  battery_overheated = false;
-  for (int i = 0; i < sensorCount; i++) {
-    if (temperatures[i] >= TEMP_LIMIT_C || temperatures[i] == DEVICE_DISCONNECTED_C) {
-      battery_overheated = true;
-    }
+void reportSystemStatus() {
+  Serial.println("System status: OK\n--------------------");
+}
+
+/**
+ * Print reason for system shutdown
+ */
+void reportEmergencyCause() {
+  if (emergency_reported) return;
+  emergency_reported = true;
+  Serial.println("SYSTEM IN EMERGENCY STATE:");
+  switch (current_status) {
+    case STATUS_INIT_FAIL: Serial.println("- Sensor initialization failure."); break;
+    case STATUS_OVERCURRENT: Serial.println("- Overcurrent condition."); break;
+    case STATUS_DISCHARGED: Serial.println("- Battery undervoltage."); break;
+    case STATUS_OVERTEMP: Serial.println("- Overtemperature detected."); break;
+    case STATUS_TEMPERATURE_SENSOR_FAIL: Serial.println("- Lost temperature sensor(s)."); break;
+    case STATUS_CURRENT_SENSOR_FAIL: Serial.println("- INA228 disconnected."); break;
+    default: Serial.println("- Unknown emergency state."); break;
+  }
+  Serial.println("Power is disabled.\n--------------------");
+}
+
+// ============================== CAN ==============================
+
+/**
+ * Compose and send BMS status frame over CAN
+ */
+void sendCANStatusFrame() {
+  BMSMessage msg;
+  msg.bms_id = BMS_NODE_ID;
+  msg.status = current_status;
+  msg.voltage = (uint8_t)(readBusVoltage() * 10.0);
+  msg.current = (uint8_t)(readCurrent() * 10.0);
+  msg.temp1_raw = (uint16_t)(temperatures[0] * 100.0);
+  msg.temp2_raw = (sensorCount > 1) ? (uint16_t)(temperatures[1] * 100.0) : 0;
+
+  twai_message_t message;
+  message.identifier = 0x100 + msg.bms_id;
+  message.extd = 0;
+  message.rtr = 0;
+  message.data_length_code = sizeof(BMSMessage);
+  memcpy(message.data, &msg, sizeof(BMSMessage));
+
+  if (twai_transmit(&message, pdMS_TO_TICKS(1000)) == ESP_OK) {
+    Serial.println("CAN BMS message sent.");
+  } else {
+    Serial.println("Failed to send CAN message.");
   }
 }
 
-/**
- * reportSystemStatus()
- * Prints normal system status when all parameters are within safe limits.
- */
-void reportSystemStatus() {
-  Serial.println("System status: OK");
-  Serial.println("------------------------");
-}
+// ============================== INA ==============================
 
 /**
- * reportEmergencyCause()
- * Reports which fault condition triggered the emergency shutdown.
- */
-void reportEmergencyCause() {
-  Serial.println("SYSTEM IN EMERGENCY STATE:");
-  if (battery_overheated) Serial.println("- Overtemperature detected.");
-  if (battery_discharged) Serial.println("- Battery voltage too low.");
-  if (overcurrent)        Serial.println("- Overcurrent condition.");
-  if (ina_disconnected)   Serial.println("- INA228 monitor not responding.");
-  Serial.println("Power is disabled. Reset board to restart system.");
-  Serial.println("------------------------");
-}
-
-// === INA228 INTERFACE FUNCTIONS ===
-
-/**
- * isINA228Available()
- * Sends a transmission to the INA228.
- * Returns true if device responds, false if not.
+ * Check if INA228 sensor responds to I2C
  */
 bool isINA228Available() {
   Wire.beginTransmission(INA228_ADDR);
@@ -238,8 +297,7 @@ bool isINA228Available() {
 }
 
 /**
- * readINA228Register24()
- * Reads a 24-bit register value from INA228 (unsigned).
+ * Read a 24-bit unsigned register from INA228
  */
 uint32_t readINA228Register24(uint8_t reg) {
   Wire.beginTransmission(INA228_ADDR);
@@ -249,51 +307,40 @@ uint32_t readINA228Register24(uint8_t reg) {
 
   uint32_t value = 0;
   if (Wire.available() == 3) {
-    value = (Wire.read() << 16);
-    value |= (Wire.read() << 8);
-    value |= Wire.read();
+    value = (Wire.read() << 16) | (Wire.read() << 8) | Wire.read();
   }
   return value;
 }
 
 /**
- * readINA228RegisterSigned24()
- * Reads a 24-bit signed register from INA228 and extends it to 32-bit int.
+ * Read a 24-bit signed register and convert to 32-bit signed value
  */
 int32_t readINA228RegisterSigned24(uint8_t reg) {
   uint32_t value = readINA228Register24(reg);
-  if (value & 0x800000) {
-    value |= 0xFF000000;  // Sign extend
-  }
+  if (value & 0x800000) value |= 0xFF000000;
   return (int32_t)value;
 }
 
 /**
- * readBusVoltage()
- * Reads bus voltage and scales according to LSB and voltage divider.
+ * Convert raw bus voltage from INA228 to volts
  */
 float readBusVoltage() {
-  uint32_t rawVoltage = readINA228Register24(REG_BUS_VOLTAGE);
-  float voltage = rawVoltage * 1.25e-6;  // Each LSB = 1.25 µV
-  voltage *= VOLTAGE_DIVIDER_RATIO;
-  return voltage;
+  uint32_t raw = readINA228Register24(REG_BUS_VOLTAGE);
+  return raw * 1.25e-6 * VOLTAGE_DIVIDER_RATIO;
 }
 
 /**
- * readCurrent()
- * Reads current value in Amps from INA228.
+ * Convert raw current from INA228 to amps
  */
 float readCurrent() {
-  int32_t rawCurrent = readINA228RegisterSigned24(REG_CURRENT);
-  float current = rawCurrent * CURRENT_LSB;
-  return current;
+  int32_t raw = readINA228RegisterSigned24(REG_CURRENT);
+  return raw * CURRENT_LSB;
 }
 
-// === HELPER FUNCTION ===
+// ============================== DEBUG ==============================
 
 /**
- * printAddress()
- * Prints an 8-byte DS18B20 ROM address in hex.
+ * Print sensor address in HEX (optional utility)
  */
 void printAddress(DeviceAddress deviceAddress) {
   for (uint8_t i = 0; i < 8; i++) {
