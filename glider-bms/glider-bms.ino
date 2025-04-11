@@ -159,6 +159,9 @@ void loop() {
  * Evaluates sensor presence and data limits and sets system emergency state.
  */
 void evaluateSystemHealth() {
+  // Do not re-evaluate if already in emergency state
+  if (emergency_triggered) return;
+  
   // Verify INA228 is still responsive
   if (!isINA228Available()) {
     current_status = STATUS_CURRENT_SENSOR_FAIL;
@@ -265,10 +268,20 @@ void reportEmergencyCause() {
  */
 void sendCANStatusFrame() {
   BMSMessage msg;
+  
+  float voltage = 0.0;
+  float current = 0.0;
+
+  if (current_status != STATUS_CURRENT_SENSOR_FAIL && current_status != STATUS_INIT_FAIL) {
+    voltage = readBusVoltage();
+    current = readCurrent();
+  }
+
+  msg.voltage = (uint8_t)(voltage * 10.0);   // Encode voltage 0–25.5V
+  msg.current = (uint8_t)(current * 10.0);   // Encode current 0–25.5A
+  
   msg.bms_id = BMS_NODE_ID;
   msg.status = current_status;
-  msg.voltage = (uint8_t)(readBusVoltage() * 10.0);
-  msg.current = (uint8_t)(readCurrent() * 10.0);
   msg.temp1_raw = (uint16_t)(temperatures[0] * 100.0);
   msg.temp2_raw = (sensorCount > 1) ? (uint16_t)(temperatures[1] * 100.0) : 0;
 

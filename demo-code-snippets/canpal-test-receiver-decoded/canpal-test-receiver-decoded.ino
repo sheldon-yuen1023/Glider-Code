@@ -47,7 +47,7 @@ const char* getStatusDescription(uint8_t status) {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(2000);
   Serial.println("ESP32-S3 CAN Receiver (TX=4, RX=5)");
 
   // Configure TWAI (CAN) driver with specified TX/RX pins and normal operation mode
