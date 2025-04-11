@@ -2,218 +2,220 @@
 #include <HighPowerStepperDriver.h>
 
 // ----------------------
-// Pin Definitions
+// Hardware Pin Definitions
 // ----------------------
-const int limitSwitchHome = 5;       // Home limit switch input pin (pressed = HIGH)
-const int limitSwitchMax  = 6;       // Maximum limit switch input pin (pressed = HIGH)
-const int indicatorPin    = 41;      // Indicator output pin (optional)
-const int potPin          = 18;      // Analog input for the linear potentiometer
+const uint8_t CSPin            = 10;   // Chip select pin for the stepper driver
+const int limitSwitchHomePin   = 5;    // Home limit switch (pressed = HIGH)
+const int limitSwitchMaxPin    = 6;    // Maximum position limit switch (pressed = HIGH)
+const int potPin               = 18;   // Analog input pin for the linear potentiometer
+const int indicatorPin         = 41;   // Optional indicator LED pin
 
 // ----------------------
-// Global Variables for Position
+// Stepper and Motion Settings
 // ----------------------
-int homePot   = 0;      // Pot reading at home (0 rotations)
-int maxPot    = 0;      // Pot reading at maximum position
-int centerPot = 0;      // Calculated center pot value
-const int centerTolerance = 10;  // Acceptable error margin for center
+const uint16_t TARGET_STEP_DELAY = 800;   // Base delay in microseconds between steps at constant speed
+
+// Define your microstep count for one complete revolution.
+// For example, if the motor is 200 full steps/rev and microstepping is set to 16:
+const long STEPS_PER_REV = 200 * 16;       // = 3200 microsteps per revolution
 
 // ----------------------
-// Revolution Monitoring
+// Smooth Motion Parameters (for moves that need acceleration/deceleration)
 // ----------------------
-const long STEPS_PER_REV = 6400;  // Adjust for your motor (e.g., 200 steps * 32 microsteps)
-long globalStepCount = 0;         // Tracks microsteps (used for rotation count)
+const uint16_t initialDelay = 1200;   // Starting delay (slower speed) after a direction change (µs)
+const uint16_t targetDelay  = TARGET_STEP_DELAY;  // Final, steady delay (µs)
+const uint16_t rampSteps    = 50;     // Number of steps over which to ramp acceleration/deceleration
 
 // ----------------------
-// State Machine Definitions
+// Global Variables for Position Tracking
 // ----------------------
-enum InitState { 
-  MOVE_REVERSE_HOME,  // Move in reverse until home switch is pressed
-  MOVE_FORWARD_MAX,   // Move forward until maximum limit switch is pressed
-  MOVE_TO_CENTER,     // Move toward center position based on pot value
-  INIT_DONE           // Initialization complete; hold position
-};
+long globalStepCount = 0;  // Tracks the current position in microsteps (relative to home)
+long homeSteps = 0;        // Home position (should be 0)
+long maxSteps  = 0;        // Recorded position when maximum limit switch is triggered
 
-InitState initState = MOVE_REVERSE_HOME;
-
-// ----------------------
-// Motor Speed & Acceleration Settings
-// ----------------------
-const uint16_t initialDelayUs = 500;  // Starting delay after a direction change
-const uint16_t targetDelayUs  = 100;  // Target (minimum) step delay for max speed
-const uint16_t accelStep      = 5;    // How much to reduce the delay per step
-uint16_t currentDelayUs       = initialDelayUs;  // Current delay between steps
+// Record the potentiometer readings at the two limits
+int homePot = 0;
+int maxPot  = 0;
 
 // ----------------------
-// Motor Direction Definitions
+// State Machine for Initialization
 // ----------------------
-const int FORWARD = 0;  // Forward motion
-const int REVERSE = 1;  // Reverse motion
-int currentDirection = REVERSE; // Start in reverse to find home
+enum InitState { SEARCH_HOME, SEARCH_MAX, MOVE_TO_CENTER, INIT_COMPLETE };
+InitState initState = SEARCH_HOME;
 
 // ----------------------
-// Motor Driver Setup
+// Create Stepper Driver Instance
 // ----------------------
-const uint8_t CSPin = 10;         // Chip select pin for the stepper driver
-HighPowerStepperDriver sd;        // Stepper driver instance
+HighPowerStepperDriver sd;
 
 // ----------------------
-// For Edge Detection on Limit Switches
+// Function: smoothMoveSteps
 // ----------------------
-int prevHomeState = LOW;
-int prevMaxState  = LOW;
+// Moves the motor a given number of microsteps smoothly using a simple ramp acceleration profile.
+// Positive steps move forward; negative steps move reverse.
+void smoothMoveSteps(long steps) {
+  bool forward = (steps > 0);
+  long totalSteps = abs(steps);
+  
+  // Determine ramp (acceleration) steps.
+  long accelSteps = min((long)rampSteps, totalSteps / 2);
+  long decelSteps = accelSteps;
+  long constSteps = totalSteps - accelSteps - decelSteps;
+
+  uint16_t currentDelay = initialDelay;
+  
+  // --- Acceleration Phase ---
+  for (long i = 0; i < accelSteps; i++) {
+    sd.step();
+    delayMicroseconds(currentDelay);
+    if (forward) {
+      globalStepCount++;
+    } else {
+      globalStepCount--;
+    }
+    // Linearly reduce delay toward targetDelay.
+    currentDelay = initialDelay - ((initialDelay - targetDelay) * (i + 1)) / accelSteps;
+  }
+  
+  // --- Constant Speed Phase ---
+  for (long i = 0; i < constSteps; i++) {
+    sd.step();
+    delayMicroseconds(targetDelay);
+    if (forward) {
+      globalStepCount++;
+    } else {
+      globalStepCount--;
+    }
+  }
+  
+  // --- Deceleration Phase ---
+  currentDelay = targetDelay;
+  for (long i = 0; i < decelSteps; i++) {
+    sd.step();
+    delayMicroseconds(currentDelay);
+    if (forward) {
+      globalStepCount++;
+    } else {
+      globalStepCount--;
+    }
+    // Linearly increase delay toward initialDelay.
+    currentDelay = targetDelay + ((initialDelay - targetDelay) * (i + 1)) / decelSteps;
+  }
+}
 
 void setup() {
   Serial.begin(115200);
-  delay(100);  // Allow time for Serial monitor
+  delay(100); // Allow time for Serial to initialize
 
-  // Setup indicator pin (optional)
+  // Initialize optional indicator LED
   pinMode(indicatorPin, OUTPUT);
   digitalWrite(indicatorPin, HIGH);
 
-  // Configure limit switch pins as INPUT (assumes external circuitry so that pressed = HIGH)
-  pinMode(limitSwitchHome, INPUT);
-  pinMode(limitSwitchMax, INPUT);
+  // Configure limit switches as INPUT_PULLUP (if using pull-ups, otherwise adjust wiring)
+  pinMode(limitSwitchHomePin, INPUT_PULLUP);
+  pinMode(limitSwitchMaxPin, INPUT_PULLUP);
 
-  // Configure potentiometer input
+  // Configure the potentiometer input
   pinMode(potPin, INPUT);
 
   // ----------------------
-  // Initialize the Motor Driver
+  // Motor Driver Initialization (using your final SPI code settings)
   // ----------------------
   SPI.begin();
   sd.setChipSelectPin(CSPin);
-  delay(10);  // Wait for power up
+  delay(10); // Allow driver time to power up
 
   sd.resetSettings();
   sd.clearStatus();
   sd.setDecayMode(HPSDDecayMode::AutoMixed);
-  sd.setCurrentMilliamps36v4(3000);   // Adjust current limit as needed
-  sd.setStepMode(HPSDStepMode::MicroStep32);
+  sd.setCurrentMilliamps36v4(3000);      // Adjust according to your motor's rating
+  sd.setStepMode(HPSDStepMode::MicroStep16);  // Set to MicroStep16 mode per your final code
   sd.enableDriver();
 
-  // Set initial direction to REVERSE (searching for home)
-  currentDirection = REVERSE;
-  sd.setDirection(currentDirection);
-
-  // Initialize previous switch states (assume not pressed initially)
-  prevHomeState = digitalRead(limitSwitchHome);
-  prevMaxState  = digitalRead(limitSwitchMax);
-
-  Serial.println("Pitch system initialization started...");
+  // Start by searching for the home position.
+  // Set direction to reverse (assume: 1 = reverse, 0 = forward)
+  sd.setDirection(1);
+  Serial.println("Initialization: Searching for Home position...");
 }
 
 void loop() {
-  // Read current limit switch states and potentiometer value
-  int currHome  = digitalRead(limitSwitchHome);
-  int currMax   = digitalRead(limitSwitchMax);
-  int currPot   = analogRead(potPin);
-
   switch (initState) {
-    
-    case MOVE_REVERSE_HOME: {
-      // Move in reverse until home limit switch is pressed.
-      sd.step();
-      delayMicroseconds(currentDelayUs);
-      
-      // Smooth acceleration: decrease delay gradually until reaching target speed.
-      if(currentDelayUs > targetDelayUs)
-        currentDelayUs = max((int)targetDelayUs, (int)(currentDelayUs - accelStep));
-      
-      // For reverse motion, decrement the global step counter.
-      globalStepCount--;
-      
-      // Check for an edge: if the home switch goes from unpressed (LOW) to pressed (HIGH)
-      if(currHome == HIGH && prevHomeState == LOW) {
-        // Home found; record the pot reading and reset rotation count.
-        homePot = currPot;
-        globalStepCount = 0;
-        Serial.print("Home reached (0 rotations). Home pot = ");
+
+    case SEARCH_HOME: {
+      // Drive the motor in reverse until the home limit switch is pressed.
+      // Now, a pressed switch gives HIGH.
+      if (digitalRead(limitSwitchHomePin) == HIGH) {  // Home switch pressed
+        // Record the potentiometer reading as home.
+        homePot = analogRead(potPin);
+        Serial.print("Home limit reached. Recorded pot value: ");
         Serial.println(homePot);
-        
-        // Transition to searching for the maximum position.
-        initState = MOVE_FORWARD_MAX;
-        currentDirection = FORWARD;
-        sd.setDirection(currentDirection);
-        // Reset ramp parameters.
-        currentDelayUs = initialDelayUs;
-      }
-      break;
-    }
-    
-    case MOVE_FORWARD_MAX: {
-      // Move forward until maximum limit switch is pressed.
-      sd.step();
-      delayMicroseconds(currentDelayUs);
-      if(currentDelayUs > targetDelayUs)
-        currentDelayUs = max((int)targetDelayUs, (int)(currentDelayUs - accelStep));
-      
-      // For forward motion, increment the step counter.
-      globalStepCount++;
-      
-      // Monitor full revolutions.
-      if(globalStepCount >= STEPS_PER_REV) {
-        long completeRevs = globalStepCount / STEPS_PER_REV;
-        Serial.print("Complete revolutions (forward): ");
-        Serial.println(completeRevs);
-        globalStepCount = globalStepCount % STEPS_PER_REV;
-      }
-      
-      // When maximum limit switch edge is detected (transition from unpressed LOW to pressed HIGH)
-      if(currMax == HIGH && prevMaxState == LOW) {
-        maxPot = currPot;
-        Serial.print("Maximum position reached. Max pot = ");
-        Serial.println(maxPot);
-        
-        // Calculate center based on the recorded home and maximum positions.
-        centerPot = (homePot + maxPot) / 2;
-        Serial.print("Calculated center pot value = ");
-        Serial.println(centerPot);
-        
-        initState = MOVE_TO_CENTER;
-        currentDelayUs = initialDelayUs;  // Reset ramp for the next phase.
-      }
-      break;
-    }
-    
-    case MOVE_TO_CENTER: {
-      // Use potentiometer feedback to move toward the center.
-      int error = centerPot - currPot;
-      
-      // If within tolerance, hold position and mark initialization complete.
-      if(abs(error) <= centerTolerance) {
-        Serial.println("Center position reached. Initialization complete.");
-        initState = INIT_DONE;
-        break;
-      }
-      
-      // Choose direction based on error: if error > 0, pot value is too low => move forward; else reverse.
-      if(error > 0)
-        currentDirection = FORWARD;
-      else
-        currentDirection = REVERSE;
-      
-      sd.setDirection(currentDirection);
-      sd.step();
-      delayMicroseconds(currentDelayUs);
-      if(currentDelayUs > targetDelayUs)
-        currentDelayUs = max((int)targetDelayUs, (int)(currentDelayUs - accelStep));
-      
-      // (Optional) Update step count if needed.
-      if(currentDirection == FORWARD)
-        globalStepCount++;
-      else
+        // Set home position as 0 microsteps.
+        globalStepCount = 0;
+        homeSteps = 0;
+        Serial.println("Switching direction; now searching for Maximum position...");
+        // Change direction to forward.
+        sd.setDirection(0);
+        initState = SEARCH_MAX;
+      } else {
+        // While searching home, run at constant speed.
+        sd.step();
+        delayMicroseconds(TARGET_STEP_DELAY);
+        // Since moving in reverse, decrement the global step counter.
         globalStepCount--;
-      
+      }
       break;
     }
-    
-    case INIT_DONE: {
-      // Hold position; initialization is complete. No further stepping.
+
+    case SEARCH_MAX: {
+      // Drive the motor forward until the maximum limit switch is pressed.
+      if (digitalRead(limitSwitchMaxPin) == HIGH) {  // Maximum switch pressed
+        maxPot = analogRead(potPin);
+        Serial.print("Maximum limit reached. Recorded pot value: ");
+        Serial.println(maxPot);
+        // Record the maximum step count reached from home.
+        maxSteps = globalStepCount;
+        Serial.print("Total microsteps from home to maximum: ");
+        Serial.println(maxSteps);
+        Serial.print("Complete revolutions (forward): ");
+        Serial.println((float)maxSteps / STEPS_PER_REV);
+        initState = MOVE_TO_CENTER;
+      } else {
+        sd.step();
+        delayMicroseconds(TARGET_STEP_DELAY);
+        globalStepCount++;
+      }
+      break;
+    }
+
+    case MOVE_TO_CENTER: {
+      // Compute center position as half the distance from home (0) to max.
+      long centerSteps = maxSteps / 2;
+      long stepsToMove = centerSteps - globalStepCount;
+      Serial.print("Centering: Need to move ");
+      Serial.print(stepsToMove);
+      Serial.println(" microsteps to reach center.");
+      
+      if (stepsToMove != 0) {
+        if (stepsToMove > 0) {
+          sd.setDirection(0);  // Move forward
+        } else {
+          sd.setDirection(1);  // Move reverse
+        }
+        smoothMoveSteps(stepsToMove);
+      } else {
+        Serial.println("Already at center.");
+      }
+      initState = INIT_COMPLETE;
+      break;
+    }
+
+    case INIT_COMPLETE: {
+      Serial.println("Pitch system initialization complete.");
+      // Hold position indefinitely.
+      while (1) {
+        delay(1000);
+      }
       break;
     }
   }
-  
-  // Update previous switch states for edge detection.
-  prevHomeState = currHome;
-  prevMaxState  = currMax;
 }
