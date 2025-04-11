@@ -70,6 +70,16 @@ Each BMS periodically transmits a `BMSMessage` structure over the CAN bus:
 | `temp1_raw` | `uint16_t`| Temperature sensor 1, multiplied by 100      |
 | `temp2_raw` | `uint16_t`| Temperature sensor 2, multiplied by 100      |
 
+##### Data Scaling and Resolution
+
+| Field       | Resolution    | Range                    | Notes                                               |
+|-------------|---------------|--------------------------|-----------------------------------------------------|
+| `voltage`   | 0.1 V         | 0.0 – 25.5 V             | 8-bit field scaled as `raw / 10.0`                  |
+| `current`   | 0.1 A         | 0.0 – 25.5 A             | 8-bit field scaled as `raw / 10.0`                  |
+| `temp*_raw` | 0.01 °C       | 0.00 – 655.35 °C         | 16-bit field scaled as `raw / 100.0` (sufficient for most use cases) |
+
+> All values are compactly encoded to minimize bandwidth while preserving practical resolution for diagnostics and safety decisions.
+
 ### Status Codes
 
 The `status` field in the CAN message reflects the operational state of the BMS:
