@@ -1,7 +1,7 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-#define ONE_WIRE_BUS 10  // GPIO10 = D10 on XIAO ESP32-C3
+#define ONE_WIRE_BUS 8  // GPIO10 = D10 on XIAO ESP32-C3
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
