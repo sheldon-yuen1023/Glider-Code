@@ -13,11 +13,11 @@ const int indicatorPin         = 41;   // Optional indicator LED pin
 // ----------------------
 // Stepper and Motion Settings
 // ----------------------
-const uint16_t TARGET_STEP_DELAY = 800;   // Base delay in microseconds between steps at constant speed
+const uint16_t TARGET_STEP_DELAY = 1000;   // Base delay in microseconds between steps at constant speed
 
 // Define your microstep count for one complete revolution.
 // For example, if the motor is 200 full steps/rev and microstepping is set to 16:
-const long STEPS_PER_REV = 200 * 16;       // = 3200 microsteps per revolution
+const long STEPS_PER_REV = 256 * 16;       // = 3200 microsteps per revolution
 
 // ----------------------
 // Smooth Motion Parameters (for moves that need acceleration/deceleration)
@@ -128,7 +128,7 @@ void setup() {
   sd.resetSettings();
   sd.clearStatus();
   sd.setDecayMode(HPSDDecayMode::AutoMixed);
-  sd.setCurrentMilliamps36v4(3000);      // Adjust according to your motor's rating
+  sd.setCurrentMilliamps36v4(600);      // Adjust according to your motor's rating
   sd.setStepMode(HPSDStepMode::MicroStep16);  // Set to MicroStep16 mode per your final code
   sd.enableDriver();
 
