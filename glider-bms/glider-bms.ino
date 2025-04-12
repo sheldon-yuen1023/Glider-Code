@@ -32,7 +32,7 @@
 #define CURRENT_LIMIT 15.0            // Max allowable current (A)
 #define VOLTAGE_MIN 0                 // Minimum safe voltage (V)
 #define TEMP_LIMIT_C 40.0             // Maximum safe temperature (°C)
-#define BMS_NODE_ID 1                 // Unique BMS identifier on CAN bus
+#define BMS_NODE_ID 3                 // Unique BMS identifier on CAN bus
 
 // Timers for update loops
 #define SENSOR_UPDATE_INTERVAL 1000   // Time between sensor reads (ms)
