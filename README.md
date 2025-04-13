@@ -94,6 +94,81 @@ The `status` field in the CAN message reflects the operational state of the BMS:
 | 6    | `STATUS_TEMPERATURE_SENSOR_FAIL` | One or more DS18B20 sensors lost               |
 | 7    | `STATUS_CURRENT_SENSOR_FAIL`     | INA228 sensor lost                             |
 
-### CAN ID and Priority
+## RS485 Tether and Telemetry JSON Format
 
-Each message is transmitted using a standard 11-bit CAN ID:
+### Tether Communication (RS485)
+
+During tethered testing, the glider communicates with a surface laptop over a **long-range RS485 serial connection**. RS485 was chosen over standard UART due to its:
+
+- **Long-distance capability** (tens of meters)
+- **Noise immunity** in marine and lab environments
+- **Differential signaling**, which reduces error over twisted pair cables
+
+The RS485 interface runs over UART2 of the ESP32 flight computer at **X baud**, using GPIO X (TX) and GPIO X (RX).
+
+Every X, the ESP32 sends a complete telemetry snapshot as a **JSON-formatted string** over the tether, which can be decoded and displayed by the surface UI.
+
+---
+
+### JSON Telemetry Packet Format
+
+Below is a full example of a telemetry packet transmitted via RS485:
+
+```json
+{
+  "timestamp": 12345678,
+  "bms": {
+    "bms1": {
+      "id": 1,
+      "status": "OK",
+      "voltage": 12.3,
+      "current": 1.4,
+      "temp1": 25.6,
+      "temp2": 26.0,
+      "timestamp": 12345555
+    },
+    "bms2": {
+      "id": 2,
+      "status": "OVERTEMP",
+      "voltage": 11.9,
+      "current": 1.7,
+      "temp1": 45.3,
+      "temp2": 44.8,
+      "timestamp": 12345556
+    }
+  },
+  "vehicle": {
+    "stateCode": 3,
+    "pitch": 5.8,
+    "roll": -2.4,
+    "yaw": 182.0
+  },
+  "sensors": {
+    "pressure": 98.6,
+    "distanceToBottom": 3.4,
+    "verticalVelocity": -0.12,
+    "horizontalVelocity": 0.75,
+    "leakSensors": {
+      "sensor1": false,
+      "sensor2": false,
+      "sensor3": true
+    }
+  },
+  "actuators": {
+    "vbd1Position": 42.1,
+    "vbd2Position": 38.6,
+    "pitchPosition": 12.5,
+    "rollPosition": 3.7
+  }
+}
+```
+
+This packet includes:
+
+- **BMS status** from each active battery monitoring unit
+- **Vehicle state**, including glider orientation
+- **Sensor data**, such as pressure, depth, leak detection, and movement
+- **Actuator positions**, including both VBD and pitch/roll mechanisms
+
+These packets are parsed by the surface-side Python application for real-time visualization and logging during all tethered tests.
+
