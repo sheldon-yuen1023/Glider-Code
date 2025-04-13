@@ -3,6 +3,63 @@
 #include <driver/twai.h>
 #include <HardwareSerial.h>
 
+
+/*
+Example telemetry JSON frame:
+
+{
+  "timestamp": 12345678,
+  "bms": {
+    "bms1": {
+      "id": 1,
+      "status": "OK",
+      "voltage": 12.3,
+      "current": 1.4,
+      "temp1": 25.6,
+      "temp2": 26.0,
+      "timestamp": 12345555
+    },
+    "bms2": {
+      "id": 2,
+      "status": "OVERTEMP",
+      "voltage": 11.9,
+      "current": 1.7,
+      "temp1": 45.3,
+      "temp2": 44.8,
+      "timestamp": 12345556
+    }
+  },
+  "vehicle": {
+    "stateCode": 3,
+    "pitch": 5.8,
+    "roll": -2.4,
+    "yaw": 182.0
+  },
+  "sensors": {
+    "pressure": 98.6,
+    "distanceToBottom": 3.4,
+    "verticalVelocity": -0.12,
+    "horizontalVelocity": 0.75,
+    "leakSensors": {
+      "sensor1": false,
+      "sensor2": false,
+      "sensor3": true
+    }
+  },
+  "actuators": {
+    "vbd1Position": 42.1,
+    "vbd2Position": 38.6,
+    "pitchPosition": 12.5,
+    "rollPosition": 3.7
+  }
+}
+
+
+
+
+*/
+
+
 // ========== CAN (TWAI) Config ==========
 #define CAN_RX GPIO_NUM_5
 #define CAN_TX GPIO_NUM_4
@@ -50,10 +107,23 @@ struct DecodedBMS {
 
 DecodedBMS bmsData[4];
 
-// ========== Dummy IMU Placeholders ==========
+// ========== Dummy telemetry Placeholders ==========
 float pitch = 0.0;
 float roll = 0.0;
 float yaw = 0.0;
+int currentSystemStateCode = 3;  // Example
+float pressureReading = 98.6;
+float sonarDistance = 2.8;
+float verticalVelocity = -0.12;
+float horizontalVelocity = 0.75;
+bool leak1 = false;
+bool leak2 = false;
+bool leak3 = false;
+float VBD1_position = 0.0;      // mm
+float VBD2_position = 0.0;      // mm
+float Pitch_position = 0.0;     // mm (linear actuator for pitch trim)
+float Roll_position = 0.0;      // degrees (rotational actuator for roll)
+
 
 void setup() {
   Serial.begin(115200);
@@ -114,8 +184,11 @@ void loop() {
 void sendJSON() {
   StaticJsonDocument<1024> doc;
 
-  JsonObject bms = doc.createNestedObject("bms");
+  // Timestamp for the whole packet
+  doc["timestamp"] = millis();  // Replace with RTC timestamp if available
 
+  // Battery Monitoring Systems (BMS)
+  JsonObject bms = doc.createNestedObject("bms");
   for (int i = 0; i < 4; i++) {
     if (bmsData[i].active) {
       String key = "bms" + String(i + 1);
@@ -126,15 +199,37 @@ void sendJSON() {
       obj["current"] = bmsData[i].current;
       obj["temp1"] = bmsData[i].temp1;
       obj["temp2"] = bmsData[i].temp2;
-      obj["lastUpdate"] = bmsData[i].lastUpdate;
+      obj["timestamp"] = bmsData[i].lastUpdate;
     }
   }
 
+  // Vehicle state and orientation
   JsonObject vehicle = doc.createNestedObject("vehicle");
-  vehicle["state"] = "idle";
+  vehicle["stateCode"] = currentSystemStateCode;  // Integer for surface-side decoding
   vehicle["pitch"] = pitch;
   vehicle["roll"] = roll;
   vehicle["yaw"] = yaw;
+
+  // Sensors and environment
+  JsonObject sensors = doc.createNestedObject("sensors");
+  sensors["pressure"] = pressureReading;  // in dbar or mbar
+  sensors["distanceToBottom"] = sonarDistance;  // in meters
+  sensors["verticalVelocity"] = verticalVelocity;  // in m/s
+  sensors["horizontalVelocity"] = horizontalVelocity;  // optional
+
+  // Leak sensors
+  JsonObject leak = sensors.createNestedObject("leakSensors");
+  leak[sensor1] = 0;
+  leak[sensor2] = 0;
+  leak[sensor3] = 0;
+
+    // Actuator positions
+  JsonObject actuators = doc.createNestedObject("actuators");
+  actuators["vbd1Position"] = VBD1_position;
+  actuators["vbd2Position"] = VBD2_position;
+  actuators["pitchPosition"] = Pitch_position;
+  actuators["rollPosition"] = Roll_position;
+
 
   // Send over RS485 (UART2)
   serializeJson(doc, UART_RS485);
