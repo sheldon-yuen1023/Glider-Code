@@ -128,7 +128,7 @@ void setup() {
   sd.resetSettings();
   sd.clearStatus();
   sd.setDecayMode(HPSDDecayMode::AutoMixed);
-  sd.setCurrentMilliamps36v4(600);      // Adjust according to your motor's rating
+  sd.setCurrentMilliamps36v4(4000);      // Adjust according to your motor's rating
   sd.setStepMode(HPSDStepMode::MicroStep16);  // Set to MicroStep16 mode per your final code
   sd.enableDriver();
 
