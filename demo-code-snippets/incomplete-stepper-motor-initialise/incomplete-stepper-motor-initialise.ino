@@ -13,7 +13,7 @@ const int indicatorPin         = 41;   // Optional indicator LED pin
 // ----------------------
 // Stepper and Motion Settings
 // ----------------------
-const uint16_t TARGET_STEP_DELAY = 1000;   // Base delay in microseconds between steps at constant speed
+const uint16_t TARGET_STEP_DELAY = 900;   // Base delay in microseconds between steps at constant speed
 
 // Define your microstep count for one complete revolution.
 // For example, if the motor is 200 full steps/rev and microstepping is set to 16:
@@ -219,3 +219,4 @@ void loop() {
     }
   }
 }
+
