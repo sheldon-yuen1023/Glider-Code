@@ -94,7 +94,9 @@ void setup() {
   bool inaReady = isINA228Available();
 
   if (!tempReady || !inaReady) {
-    // If any sensor fails, enter INIT_FAIL emergency
+    Serial.println("INIT FAILURE:");
+    if (!tempReady) Serial.println("- No DS18B20 temperature sensors detected.");
+    if (!inaReady) Serial.println("- INA228 current sensor not responding.");
     current_status = STATUS_INIT_FAIL;
     emergency_triggered = true;
     digitalWrite(MOSFET_PIN, LOW); // Disable power relay immediately
@@ -282,8 +284,9 @@ void sendCANStatusFrame() {
   
   msg.bms_id = BMS_NODE_ID;
   msg.status = current_status;
-  msg.temp1_raw = (uint16_t)(temperatures[0] * 100.0);
-  msg.temp2_raw = (sensorCount > 1) ? (uint16_t)(temperatures[1] * 100.0) : 0;
+msg.temp1_raw = (temperatures != nullptr && sensorCount > 0) ? (uint16_t)(temperatures[0] * 100.0) : 0;
+msg.temp2_raw = (temperatures != nullptr && sensorCount > 1) ? (uint16_t)(temperatures[1] * 100.0) : 0;
+
 
   twai_message_t message;
   message.identifier = 0x100 + msg.bms_id;
