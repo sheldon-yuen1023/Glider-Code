@@ -25,7 +25,7 @@
 #define REG_BUS_VOLTAGE 0x05          // INA228 voltage register
 #define REG_CURRENT 0x04              // INA228 current register
 #define CURRENT_LSB 1.034e-4
-#define VOLTAGE_DIVIDER_RATIO 10.0    // Hardware voltage divider ratio
+#define VOLTAGE_DIVIDER_RATIO 9.764    // Hardware voltage divider ratio
 #define ONE_WIRE_BUS 8                // DS18B20 1-Wire data pin
 #define MOSFET_PIN 5                  // GPIO to control MOSFET/relay
 #define CAN_TX_PIN 21                 // CAN TX pin
