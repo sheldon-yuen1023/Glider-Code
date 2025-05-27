@@ -15,13 +15,16 @@
 
 // ============================== CONFIGURATION ==============================
 
+// Define NODE ID
+#define BMS_NODE_ID 1                 // Unique BMS identifier on CAN bus
+
 // Pin mappings and sensor-specific parameters
 #define I2C_SDA 6                      // I2C SDA pin
 #define I2C_SCL 7                      // I2C SCL pin
 #define INA228_ADDR 0x45              // INA228 I2C address
 #define REG_BUS_VOLTAGE 0x05          // INA228 voltage register
 #define REG_CURRENT 0x04              // INA228 current register
-#define CURRENT_LSB 2.4414e-5         // Conversion factor for current (A/bit)
+#define CURRENT_LSB 1.034e-4
 #define VOLTAGE_DIVIDER_RATIO 10.0    // Hardware voltage divider ratio
 #define ONE_WIRE_BUS 8                // DS18B20 1-Wire data pin
 #define MOSFET_PIN 5                  // GPIO to control MOSFET/relay
@@ -32,7 +35,6 @@
 #define CURRENT_LIMIT 15.0            // Max allowable current (A)
 #define VOLTAGE_MIN 0                 // Minimum safe voltage (V)
 #define TEMP_LIMIT_C 40.0             // Maximum safe temperature (°C)
-#define BMS_NODE_ID 3                 // Unique BMS identifier on CAN bus
 
 // Timers for update loops
 #define SENSOR_UPDATE_INTERVAL 1000   // Time between sensor reads (ms)
@@ -231,8 +233,8 @@ void updateTemperatures() {
 void updatePowerReadings() {
   float voltage = readBusVoltage();
   float current = readCurrent();
-  Serial.print("Voltage: "); Serial.print(voltage); Serial.println(" V");
-  Serial.print("Current: "); Serial.print(current); Serial.println(" A");
+Serial.print("Voltage: "); Serial.print(voltage, 4); Serial.println(" V");
+Serial.print("Current: "); Serial.print(current, 4); Serial.println(" A");
 }
 
 // ============================== STATUS ==============================
