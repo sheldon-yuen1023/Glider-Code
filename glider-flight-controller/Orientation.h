@@ -9,4 +9,8 @@ void initOrientation();
 // Thread-safe function to retrieve the latest filtered pitch, roll, and yaw (in degrees)
 void getOrientation(float& pitch, float& roll, float& yaw);
 
+extern unsigned long lastOrientationUpdate;
+extern unsigned long lastPrintTime;
+extern const unsigned long updateInterval;
+extern const unsigned long printInterval;
 #endif
