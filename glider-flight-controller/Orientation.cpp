@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <LSM6.h>       // Accelerometer + Gyroscope
 #include <LIS3MDL.h>     // Magnetometer
+#include "Pins.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -69,7 +70,7 @@ void orientationTask(void* parameter) {
 // Call this in setup() to initialize sensors and start the filter task
 void initOrientation() {
   delay(1000);
-  Wire.begin(8, 9);          // Replace with your board's SDA, SCL pins
+  Wire.begin(IMU_SDA, IMU_SCL);          // Replace with your board's SDA, SCL pins
   Wire.setClock(800000);     // Fast I2C for high IMU polling rate
 
   if (!imu.init()) {
