@@ -11,7 +11,7 @@ void setup() {
   delay(1000);
   Serial.println("Starting system...");
 
-  //initOrientation();            // Start IMU on Core 0
+  initOrientation();            // Start IMU on Core 0
   initCAN();                    // Init CAN
   startCANReceiveTask();        // Start CAN read task
 
@@ -22,20 +22,5 @@ void setup() {
 }
 
 void loop() {
-  /*
-  unsigned long now = micros();
 
-  if (now - lastOrientationUpdate >= updateInterval) {
-    lastOrientationUpdate = now;
-
-    float pitch, roll, yaw;
-    getOrientation(pitch, roll, yaw);
-
-    if (now - lastPrintTime >= printInterval) {
-      lastPrintTime = now;
-      Serial.printf("Pitch: %.2f°, Roll: %.2f°, Yaw: %.2f°\n", pitch, roll, yaw);
-    }
-  }
-  */
-  // Add other non-blocking tasks here if needed
 }

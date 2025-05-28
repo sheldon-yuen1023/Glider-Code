@@ -5,13 +5,10 @@
 #include <HardwareSerial.h>
 #include "Pins.h"
 
-extern HardwareSerial RS485;  // <-- Let main .ino own the UART object
+extern HardwareSerial RS485;
 
 // Dummy placeholders (replace with real data when ready)
 int currentSystemStateCode = 3;
-float pitch = 0.0;
-float roll = 0.0;
-float yaw = 0.0;
 float pressureReading = 98.6;
 float sonarDistance = 3.4;
 float verticalVelocity = -0.12;
@@ -26,14 +23,10 @@ float Roll_position = 3.7;
 
 void TelemetryTask(void* param) {
   Serial.println("[TASK] Starting TelemetryTask");
-  vTaskDelay(pdMS_TO_TICKS(500));  // Allow hardware to settle
-
+  vTaskDelay(pdMS_TO_TICKS(500));  // Give other systems time to initialize
 
   while (true) {
-    Serial.println("[TASK] Building JSON doc...");
     StaticJsonDocument<1024> doc;
-
-    // Top-level timestamp
     doc["timestamp"] = millis();
 
     // BMS section
@@ -41,13 +34,14 @@ void TelemetryTask(void* param) {
     for (int i = 0; i < 5; i++) {
       String key = "bms" + String(i + 1);
       JsonObject entry = bms.createNestedObject(key);
-      getLatestBMS(i, entry);
+      getLatestBMS(i, entry);  // From CANHandler
     }
 
-    // Orientation
+    // Orientation (get thread-safe filtered values)
+    float pitch, roll, yaw;
     getOrientation(pitch, roll, yaw);
 
-    // Vehicle
+    // Vehicle state
     JsonObject vehicle = doc.createNestedObject("vehicle");
     vehicle["stateCode"] = currentSystemStateCode;
     vehicle["pitch"] = pitch;
@@ -73,13 +67,14 @@ void TelemetryTask(void* param) {
     actuators["pitchPosition"] = Pitch_position;
     actuators["rollPosition"] = Roll_position;
 
-    // Send over RS485 and debug USB
+    // Send over RS485 and USB for debug
     serializeJson(doc, RS485);
-    RS485.println();
+    RS485.write('\n');  // Line break to delimit packets
+
     serializeJsonPretty(doc, Serial);
     Serial.println();
 
-    vTaskDelay(pdMS_TO_TICKS(1000));  // Send once per second
+    vTaskDelay(pdMS_TO_TICKS(1000));  // 1 Hz telemetry
   }
 }
 

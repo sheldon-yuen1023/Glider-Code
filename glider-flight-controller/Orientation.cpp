@@ -1,69 +1,114 @@
-// Orientation.cpp
-
 #include "Orientation.h"
 #include "KalmanOrientation.h"
-
-#define ORIENTATION_DISABLED true  // ✅ Set to true to disable IMU access (no I2C transactions)
-
-#if !ORIENTATION_DISABLED
 #include <Wire.h>
-#include <Adafruit_LSM6DS33.h>
-#include <Adafruit_LIS3MDL.h>
+#include <LSM6.h>       // Accelerometer + Gyroscope
+#include <LIS3MDL.h>     // Magnetometer
+#include "Pins.h"
 
-Adafruit_LSM6DS33 lsm6ds33;
-Adafruit_LIS3MDL lis3mdl;
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+
+// Sensor instances
+LSM6 imu;
+LIS3MDL mag;
 KalmanOrientation kalman;
-#endif
 
-// Orientation state
-unsigned long lastOrientationUpdate = 0;
-unsigned long lastPrintTime = 0;
-const unsigned long updateInterval = 5000;      // in microseconds (200 Hz)
-const unsigned long printInterval = 1000000;    // in microseconds (1 Hz)
+// Shared filtered orientation values
+volatile float sharedPitch = 0;
+volatile float sharedRoll = 0;
+volatile float sharedYaw = 0;
 
+// Thread-safe lock for shared values
+SemaphoreHandle_t orientationMutex;
+
+// Optional magnetometer offset correction
+float magOffsetX = 0;
+float magOffsetY = 0;
+float magOffsetZ = 0;
+
+// FreeRTOS task that handles IMU read + Kalman filtering (runs on Core 0)
+void orientationTask(void* parameter) {
+  unsigned long lastUpdate = micros();
+
+  while (true) {
+    imu.read();
+    mag.read();
+
+    unsigned long now = micros();
+    float dt = (now - lastUpdate) / 1000000.0f;
+    if (dt <= 0.0f || dt > 0.5f) dt = 1.0f / FILTER_UPDATE_RATE_HZ;
+    lastUpdate = now;
+
+    float ax = imu.a.x / 1000.0f;
+    float ay = imu.a.y / 1000.0f;
+    float az = imu.a.z / 1000.0f;
+
+    float gx = imu.g.x * 0.001f * PI / 180.0f;
+    float gy = imu.g.y * 0.001f * PI / 180.0f;
+    float gz = imu.g.z * 0.001f * PI / 180.0f;
+
+    float mx = (mag.m.x * 0.1f) - magOffsetX;
+    float my = (mag.m.y * 0.1f) - magOffsetY;
+    float mz = (mag.m.z * 0.1f) - magOffsetZ;
+
+    kalman.update(ax, ay, az, gx, gy, gz, mx, my, mz, dt);
+
+    // Update shared orientation values safely
+    if (xSemaphoreTake(orientationMutex, 0) == pdTRUE) {
+      sharedPitch = kalman.getPitch();
+      sharedRoll  = kalman.getRoll();
+      sharedYaw   = kalman.getYaw();
+      xSemaphoreGive(orientationMutex);
+    }
+
+    // Delay to maintain update frequency
+    delayMicroseconds(1000000 / FILTER_UPDATE_RATE_HZ);
+  }
+}
+
+// Call this in setup() to initialize sensors and start the filter task
 void initOrientation() {
-#if ORIENTATION_DISABLED
-  Serial.println("Orientation system disabled.");
-  return;
-#else
-  Wire.begin();
-  if (!lsm6ds33.begin_I2C()) {
-    Serial.println("Failed to find LSM6DS33 chip");
-    while (1) { delay(10); }
-  }
-  if (!lis3mdl.begin_I2C()) {
-    Serial.println("Failed to find LIS3MDL chip");
-    while (1) { delay(10); }
-  }
+  delay(1000);
+  Wire.begin(IMU_SDA, IMU_SCL);          // Replace with your board's SDA, SCL pins
+  Wire.setClock(800000);     // Fast I2C for high IMU polling rate
 
-  lsm6ds33.setAccelRange(LSM6DS_ACCEL_RANGE_2_G);
-  lsm6ds33.setGyroRange(LSM6DS_GYRO_RANGE_250_DPS);
-  lsm6ds33.setAccelDataRate(LSM6DS_RATE_104_HZ);
-  lsm6ds33.setGyroDataRate(LSM6DS_RATE_104_HZ);
-  lis3mdl.setPerformanceMode(LIS3MDL_MEDIUMMODE);
-  lis3mdl.setOperationMode(LIS3MDL_CONTINUOUSMODE);
-  lis3mdl.setDataRate(LIS3MDL_DATARATE_155_HZ);
-  lis3mdl.setRange(LIS3MDL_RANGE_4_GAUSS);
+  if (!imu.init()) {
+    Serial.println("Failed to detect LSM6!");
+    while (1);
+  }
+  imu.enableDefault();
 
-  kalman.begin();
-#endif
+  if (!mag.init()) {
+    Serial.println("Failed to detect LIS3MDL magnetometer!");
+    while (1);
+  }
+  mag.enableDefault();
+
+  kalman.begin(0.05); // Filter responsiveness: 0.01–0.1 typical range
+  orientationMutex = xSemaphoreCreateMutex();
+
+  // Launch IMU fusion task on Core 0
+  xTaskCreatePinnedToCore(
+    orientationTask,      // Task function
+    "OrientationTask",    // Name
+    4096,                 // Stack size
+    NULL,                 // Params
+    1,                    // Priority
+    NULL,                 // Task handle
+    0                     // Run on Core 0
+  );
+
+  Serial.println("Orientation task started on Core 0.");
 }
 
+// Thread-safe accessor for current orientation
 void getOrientation(float& pitch, float& roll, float& yaw) {
-#if ORIENTATION_DISABLED
-  pitch = roll = yaw = 0.0f;
-  return;
-#else
-  sensors_event_t accel, gyro, mag;
-  lsm6ds33.getEvent(&accel, &gyro, NULL, NULL);
-  lis3mdl.getEvent(&mag);
-
-  kalman.update(accel.acceleration.x, accel.acceleration.y, accel.acceleration.z,
-                gyro.gyro.x, gyro.gyro.y, gyro.gyro.z,
-                mag.magnetic.x, mag.magnetic.y, mag.magnetic.z);
-
-  pitch = kalman.getPitch();
-  roll  = kalman.getRoll();
-  yaw   = kalman.getYaw();
-#endif
+  if (xSemaphoreTake(orientationMutex, 0) == pdTRUE) {
+    pitch = sharedPitch;
+    roll  = sharedRoll;
+    yaw   = sharedYaw;
+    xSemaphoreGive(orientationMutex);
+  }
 }
+  
