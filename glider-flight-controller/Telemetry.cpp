@@ -26,62 +26,28 @@ float Roll_position = 3.7;
 
 void TelemetryTask(void* param) {
   Serial.println("[TASK] Starting TelemetryTask");
-  vTaskDelay(pdMS_TO_TICKS(500));  // Allow hardware to settle
-
+  vTaskDelay(pdMS_TO_TICKS(500));
 
   while (true) {
-    Serial.println("[TASK] Building JSON doc...");
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<512> doc;
 
-    // Top-level timestamp
-    doc["timestamp"] = millis();
+    float pitch, roll, yaw;
+    getOrientation(pitch, roll, yaw);  // get thread-safe filtered data
 
-    // BMS section
-    JsonObject bms = doc.createNestedObject("bms");
-    for (int i = 0; i < 5; i++) {
-      String key = "bms" + String(i + 1);
-      JsonObject entry = bms.createNestedObject(key);
-      getLatestBMS(i, entry);
-    }
-
-    // Orientation
-    getOrientation(pitch, roll, yaw);
-
-    // Vehicle
     JsonObject vehicle = doc.createNestedObject("vehicle");
-    vehicle["stateCode"] = currentSystemStateCode;
     vehicle["pitch"] = pitch;
     vehicle["roll"] = roll;
     vehicle["yaw"] = yaw;
 
-    // Sensors
-    JsonObject sensors = doc.createNestedObject("sensors");
-    sensors["pressure"] = pressureReading;
-    sensors["distanceToBottom"] = sonarDistance;
-    sensors["verticalVelocity"] = verticalVelocity;
-    sensors["horizontalVelocity"] = horizontalVelocity;
+    // Add more JSON fields if needed (CAN, sensors, etc)
 
-    JsonObject leak = sensors.createNestedObject("leakSensors");
-    leak["sensor1"] = leak1;
-    leak["sensor2"] = leak2;
-    leak["sensor3"] = leak3;
-
-    // Actuators
-    JsonObject actuators = doc.createNestedObject("actuators");
-    actuators["vbd1Position"] = VBD1_position;
-    actuators["vbd2Position"] = VBD2_position;
-    actuators["pitchPosition"] = Pitch_position;
-    actuators["rollPosition"] = Roll_position;
-
-    // Send over RS485 and debug USB
-    serializeJson(doc, RS485);
-    RS485.println();
     serializeJsonPretty(doc, Serial);
     Serial.println();
 
-    vTaskDelay(pdMS_TO_TICKS(1000));  // Send once per second
+    vTaskDelay(pdMS_TO_TICKS(1000));  // 1 Hz telemetry
   }
 }
+
 
 void startTelemetryTask() {
   xTaskCreatePinnedToCore(TelemetryTask, "TelemetryTask", 8192, NULL, 1, NULL, 1);
