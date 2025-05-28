@@ -5,13 +5,10 @@
 #include <HardwareSerial.h>
 #include "Pins.h"
 
-extern HardwareSerial RS485;  // <-- Let main .ino own the UART object
+extern HardwareSerial RS485;
 
 // Dummy placeholders (replace with real data when ready)
 int currentSystemStateCode = 3;
-float pitch = 0.0;
-float roll = 0.0;
-float yaw = 0.0;
 float pressureReading = 98.6;
 float sonarDistance = 3.4;
 float verticalVelocity = -0.12;
@@ -26,33 +23,60 @@ float Roll_position = 3.7;
 
 void TelemetryTask(void* param) {
   Serial.println("[TASK] Starting TelemetryTask");
-  vTaskDelay(pdMS_TO_TICKS(500));
+  vTaskDelay(pdMS_TO_TICKS(500));  // Give other systems time to initialize
 
   while (true) {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<1024> doc;
+    doc["timestamp"] = millis();
 
+    // BMS section
+    JsonObject bms = doc.createNestedObject("bms");
+    for (int i = 0; i < 5; i++) {
+      String key = "bms" + String(i + 1);
+      JsonObject entry = bms.createNestedObject(key);
+      getLatestBMS(i, entry);  // From CANHandler
+    }
+
+    // Orientation (get thread-safe filtered values)
     float pitch, roll, yaw;
-    getOrientation(pitch, roll, yaw);  // get thread-safe filtered data
+    getOrientation(pitch, roll, yaw);
 
+    // Vehicle state
     JsonObject vehicle = doc.createNestedObject("vehicle");
+    vehicle["stateCode"] = currentSystemStateCode;
     vehicle["pitch"] = pitch;
     vehicle["roll"] = roll;
     vehicle["yaw"] = yaw;
 
-    // Send over USB for debug
+    // Sensors
+    JsonObject sensors = doc.createNestedObject("sensors");
+    sensors["pressure"] = pressureReading;
+    sensors["distanceToBottom"] = sonarDistance;
+    sensors["verticalVelocity"] = verticalVelocity;
+    sensors["horizontalVelocity"] = horizontalVelocity;
+
+    JsonObject leak = sensors.createNestedObject("leakSensors");
+    leak["sensor1"] = leak1;
+    leak["sensor2"] = leak2;
+    leak["sensor3"] = leak3;
+
+    // Actuators
+    JsonObject actuators = doc.createNestedObject("actuators");
+    actuators["vbd1Position"] = VBD1_position;
+    actuators["vbd2Position"] = VBD2_position;
+    actuators["pitchPosition"] = Pitch_position;
+    actuators["rollPosition"] = Roll_position;
+
+    // Send over RS485 and USB for debug
+    serializeJson(doc, RS485);
+    RS485.write('\n');  // Line break to delimit packets
+
     serializeJsonPretty(doc, Serial);
     Serial.println();
-
-    // Send over RS485
-    char buffer[256];
-    size_t len = serializeJson(doc, buffer, sizeof(buffer));
-    RS485.write((const uint8_t*)buffer, len);
-    RS485.write('\n');  // Optional line break for delimiting packets
 
     vTaskDelay(pdMS_TO_TICKS(1000));  // 1 Hz telemetry
   }
 }
-
 
 void startTelemetryTask() {
   xTaskCreatePinnedToCore(TelemetryTask, "TelemetryTask", 8192, NULL, 1, NULL, 1);

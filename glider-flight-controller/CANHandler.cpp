@@ -49,7 +49,7 @@ void initCAN() {
 }
 
 void startCANReceiveTask() {
-  xTaskCreatePinnedToCore(CANReceiveTask, "CANReceiveTask", 4096, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(CANReceiveTask, "CANReceiveTask", 4096, NULL, 1, NULL, 1);
 }
 
 void getLatestBMS(int index, JsonObject& obj) {
