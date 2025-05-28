@@ -39,10 +39,15 @@ void TelemetryTask(void* param) {
     vehicle["roll"] = roll;
     vehicle["yaw"] = yaw;
 
-    // Add more JSON fields if needed (CAN, sensors, etc)
-
+    // Send over USB for debug
     serializeJsonPretty(doc, Serial);
     Serial.println();
+
+    // Send over RS485
+    char buffer[256];
+    size_t len = serializeJson(doc, buffer, sizeof(buffer));
+    RS485.write((const uint8_t*)buffer, len);
+    RS485.write('\n');  // Optional line break for delimiting packets
 
     vTaskDelay(pdMS_TO_TICKS(1000));  // 1 Hz telemetry
   }
