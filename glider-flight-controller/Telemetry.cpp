@@ -52,8 +52,8 @@ void TelemetryTask(void* param) {
     JsonObject sensors = doc.createNestedObject("sensors");
     sensors["pressure"] = pressureReading;
     sensors["distanceToBottom"] = sonarDistance;
-    sensors["verticalVelocity"] = verticalVelocity;
-    sensors["horizontalVelocity"] = horizontalVelocity;
+    //sensors["verticalVelocity"] = verticalVelocity;
+    //sensors["horizontalVelocity"] = horizontalVelocity;
 
     JsonObject leak = sensors.createNestedObject("leakSensors");
     leak["sensor1"] = leak1;
