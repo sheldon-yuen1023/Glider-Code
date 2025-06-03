@@ -1,194 +1,178 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import struct
 import threading
+import json
+import serial
+import time
 
-# Ensure python-can is installed: pip install python-can
-import can
+# === Configuration ===
+COM_PORT = 'COM18'    # CANoverSerial bridge port
+BAUD_RATE = 9600    # Match Arduino/CAN bridge baud
 
-# -----------------------------------------------------------
-# CAN Bus Initialization
-# -----------------------------------------------------------
+# === Serial Setup (for both sending commands and receiving JSON telemetry) ===
 try:
-    # Adjust channel and bustype as needed for your platform
-    bus = can.interface.Bus(channel='can0', bustype='socketcan')
-except Exception as e:
-    messagebox.showerror(
-        "CAN Bus Error",
-        f"Could not initialize CAN interface:\n{e}"
-    )
-    bus = None
+    ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=1)
+    time.sleep(2)  # Allow port to settle
+except serial.SerialException as e:
+    messagebox.showerror("Serial Port Error", f"Could not open {COM_PORT}:\n{e}")
+    ser = None
 
 # -----------------------------------------------------------
-# Helper Functions to Pack and Send CAN Messages
+# Shared Telemetry Dictionary + Lock
 # -----------------------------------------------------------
-def send_can_message(arbitration_id: int, data: bytes):
+telemetry_lock = threading.Lock()
+telemetry = {
+    'depth':       "N/A",
+    'pitch':       "N/A",
+    'roll':        "N/A",
+    'yaw':         "N/A",
+    'floor_dist':  "N/A",
+    'leak':        "N/A",
+    'vbd1':        "N/A",
+    'vbd2':        "N/A",
+    'pitchPos':    "N/A",
+    'rollPos':     "N/A",
+    'bms1':        "N/A",
+    'bms2':        "N/A",
+    'bms3':        "N/A",
+    'bms4':        "N/A",
+    'bms5':        "N/A"
+}
+
+# -----------------------------------------------------------
+# Helper: Send a text command over serial
+# -----------------------------------------------------------
+def send_serial_command(cmd_str: str):
     """
-    Send a CAN message with the given ID and data payload.
+    Send a command string over the serial link (ending with newline).
     """
-    if not bus:
+    if not ser:
         return
     try:
-        msg = can.Message(
-            arbitration_id=arbitration_id,
-            data=data,
-            is_extended_id=False
-        )
-        bus.send(msg)
+        ser.write((cmd_str + "\n").encode('utf-8'))
+        print(f"Sent: {cmd_str}")
     except Exception as e:
-        print(f"CAN send error (ID 0x{arbitration_id:X}): {e}")
+        print(f"Serial write error: {e}")
 
-
+# -----------------------------------------------------------
+# Command Functions
+# -----------------------------------------------------------
 def send_pitch():
-    """
-    Read pitch from entry, pack into int16 little-endian with roll=0,
-    and send under CAN ID 0x100.
-    """
+    """Send a PITCH command: 'PITCH,<value>'."""
     try:
         pitch = int(entry_pitch.get())
     except ValueError:
         messagebox.showwarning("Invalid Input", "Pitch must be an integer.")
         return
-
-    roll = 0  # No manual roll control; send 0
-    data = struct.pack('<hh', pitch, roll)
-    send_can_message(0x100, data)
-    print(f"Sent PITCH -> pitch: {pitch}, roll: {roll} (fixed)")
-
+    # Format: PITCH,<pitch>
+    cmd = f"PITCH,{pitch}"
+    send_serial_command(cmd)
 
 def send_vbd():
-    """
-    Read VBD state (IN=0, MID=1, OUT=2) and send under CAN ID 0x101.
-    """
-    state_str = vbd_state.get()
-    state_map = {'IN': 0, 'MID': 1, 'OUT': 2}
-    state = state_map.get(state_str, 0)
-    data = struct.pack('<B', state)
-    send_can_message(0x101, data)
-    print(f"Sent VBD -> state: {state_str}")
-
+    """Send a VBD command: 'VBD,IN/MID/OUT'."""
+    state = vbd_state.get()
+    cmd = f"VBD,{state}"
+    send_serial_command(cmd)
 
 def start_mission():
     """
-    Collect mission parameters, convert to required units, pack into bytes,
-    and send under CAN ID 0x102.
+    Send a START command:
+      'START,<depthLimit>,<floorDist>,<cycles>,<diveAngle>,<riseAngle>'
     """
     try:
-        depth_m = float(entry_depth_limit.get())
-        floor_m = float(entry_floor_distance.get())
-        cycles = int(entry_cycles.get())
-        dive_angle = int(entry_dive_angle.get())
-        rise_angle = int(entry_rise_angle.get())
+        depth_m     = float(entry_depth_limit.get())
+        floor_m     = float(entry_floor_distance.get())
+        cycles      = int(entry_cycles.get())
+        dive_angle  = int(entry_dive_angle.get())
+        rise_angle  = int(entry_rise_angle.get())
     except ValueError:
         messagebox.showwarning(
             "Invalid Input",
-            "Make sure Depth, Floor Distance are numbers and Cycles/Angles are integers."
+            "Depth/Floor must be numbers; Cycles/Angles must be integers."
         )
         return
 
-    # Convert meters to centimeters and pack as signed int16
-    depth_cm = int(depth_m * 100)
-    floor_cm = int(floor_m * 100)
-
-    # Pack: depth_cm (int16), floor_cm (int16), cycles (uint8), dive_angle (int8), rise_angle (int8)
-    data = struct.pack('<hhBBBb',
-                       depth_cm,
-                       floor_cm,
-                       cycles & 0xFF,
-                       dive_angle & 0xFF,
-                       rise_angle & 0xFF,
-                       0  # padding byte to fill 8 bytes (ignored by firmware)
-                       )
-    send_can_message(0x102, data)
-    print(f"Sent START_MISSION -> depth: {depth_m}m, floor: {floor_m}m, cycles: {cycles}, "
-          f"dive_angle: {dive_angle}, rise_angle: {rise_angle}")
-
+    # Format floats with one decimal if needed
+    cmd = f"START,{depth_m:.2f},{floor_m:.2f},{cycles},{dive_angle},{rise_angle}"
+    send_serial_command(cmd)
 
 def stop_mission():
-    """
-    Send STOP under CAN ID 0x103 (no data payload).
-    """
-    send_can_message(0x103, bytes())
-    print("Sent STOP_MISSION")
-
+    """Send 'STOP'."""
+    send_serial_command("STOP")
 
 def emergency_surface():
-    """
-    Send EMERGENCY under CAN ID 0x104 (no data payload).
-    """
-    send_can_message(0x104, bytes())
-    print("Sent EMERGENCY_SURFACE")
-
+    """Send 'EMERGENCY'."""
+    send_serial_command("EMERGENCY")
 
 # -----------------------------------------------------------
-# Telemetry Handling
+# Serial Listener Thread: Parse JSON Telemetry
 # -----------------------------------------------------------
-telemetry_lock = threading.Lock()
-
-# Telemetry variables (updated by CAN listener)
-telemetry = {
-    'depth': "N/A",
-    'pitch': "N/A",
-    'roll': "N/A",
-    'yaw': "N/A",
-    'floor_dist': "N/A"
-}
-
-
-def process_can_message(msg):
+def serial_listener():
     """
-    Decode incoming CAN messages and update the telemetry dictionary.
+    Read lines from serial (each line is JSON),
+    parse and update telemetry dict.
     """
-    global telemetry
-    if msg.arbitration_id == 0x300 and len(msg.data) >= 2:
-        # Depth: int16 cm -> meters
-        depth_cm = struct.unpack('<h', msg.data[0:2])[0]
-        depth_m = depth_cm / 100.0
-        with telemetry_lock:
-            telemetry['depth'] = f"{depth_m:.2f} m"
-
-    elif msg.arbitration_id == 0x301 and len(msg.data) >= 6:
-        # Orientation: pitch, roll, yaw as int16 each
-        pitch = struct.unpack('<h', msg.data[0:2])[0]
-        roll = struct.unpack('<h', msg.data[2:4])[0]
-        yaw = struct.unpack('<h', msg.data[4:6])[0]
-        with telemetry_lock:
-            telemetry['pitch'] = f"{pitch}°"
-            telemetry['roll'] = f"{roll}°"
-            telemetry['yaw'] = f"{yaw}°"
-
-    elif msg.arbitration_id == 0x302 and len(msg.data) >= 2:
-        # Sonar floor distance: int16 cm -> meters
-        floor_cm = struct.unpack('<h', msg.data[0:2])[0]
-        floor_m = floor_cm / 100.0
-        with telemetry_lock:
-            telemetry['floor_dist'] = f"{floor_m:.2f} m"
-
-
-def can_listener():
-    """
-    Continuously read from CAN and process messages.
-    Runs in a background thread.
-    """
-    if not bus:
+    if not ser:
         return
     while True:
         try:
-            msg = bus.recv(timeout=1.0)
-            if msg:
-                process_can_message(msg)
+            raw = ser.readline().decode('utf-8').strip()
+            if not raw:
+                continue
+            data = json.loads(raw)
+            with telemetry_lock:
+                # Pressure → depth
+                pressure_kpa = data.get('sensors', {}).get('pressure')
+                if pressure_kpa is not None:
+                    # Rough conversion: 1 kPa ≈ 0.01 m depth (freshwater)
+                    depth_m = (pressure_kpa - 101.3) * 0.01
+                    telemetry['depth'] = f"{depth_m:.2f} m"
+                else:
+                    telemetry['depth'] = "N/A"
+
+                # Orientation
+                vehicle = data.get('vehicle', {})
+                telemetry['pitch'] = f"{vehicle.get('pitch', 0):.2f}°"
+                telemetry['roll']  = f"{vehicle.get('roll', 0):.2f}°"
+                telemetry['yaw']   = f"{vehicle.get('yaw', 0):.2f}°"
+
+                # Distance to bottom
+                dist_bottom = data.get('sensors', {}).get('distanceToBottom')
+                telemetry['floor_dist'] = f"{dist_bottom:.2f} m" if dist_bottom is not None else "N/A"
+
+                # Leak sensors
+                leaks = data.get('sensors', {}).get('leakSensors', {})
+                telemetry['leak'] = "LEAK" if any(leaks.values()) else "OK"
+
+                # Actuator positions
+                actuators = data.get('actuators', {})
+                telemetry['vbd1']     = f"{actuators.get('vbd1Position', 0):.1f}"
+                telemetry['vbd2']     = f"{actuators.get('vbd2Position', 0):.1f}"
+                telemetry['pitchPos'] = f"{actuators.get('pitchPosition', 0):.1f}"
+                telemetry['rollPos']  = f"{actuators.get('rollPosition', 0):.1f}"
+
+                # BMS readings for bms1..bms5
+                bms_data = data.get('bms', {})
+                for idx in range(1, 6):
+                    key = f"bms{idx}"
+                    entry = bms_data.get(key, {})
+                    if entry:
+                        parts = [f"{fld}: {val}" for fld, val in entry.items()]
+                        telemetry[key] = "; ".join(parts)
+                    else:
+                        telemetry[key] = "N/A"
+        except json.JSONDecodeError:
+            continue
         except Exception:
             continue
-
 
 # -----------------------------------------------------------
 # Build the GUI
 # -----------------------------------------------------------
 root = tk.Tk()
-root.title("Underwater Glider Control Panel")
-root.configure(bg="#2F343F")  # dark background
+root.title("Underwater Glider Control & Telemetry")
+root.configure(bg="#2F343F")
 
-# Use ttk styles for better visual appearance
 style = ttk.Style(root)
 style.theme_use("clam")
 style.configure("TFrame", background="#2F343F")
@@ -197,7 +181,6 @@ style.configure("Header.TLabel", font=("Helvetica", 14, "bold"), foreground="#FF
 style.configure("TButton", font=("Helvetica", 11), padding=6)
 style.configure("Danger.TButton", background="#D9534F", foreground="white", font=("Helvetica", 11, "bold"))
 
-# Layout configuration: two columns
 root.columnconfigure(0, weight=1, pad=10)
 root.columnconfigure(1, weight=1, pad=10)
 root.rowconfigure(0, weight=0, pad=10)
@@ -212,17 +195,50 @@ for i in range(4):
 lbl_tele_header = ttk.Label(frame_telemetry, text="Telemetry", style="Header.TLabel")
 lbl_tele_header.grid(row=0, column=0, columnspan=4, pady=(5, 10))
 
-lbl_depth = ttk.Label(frame_telemetry, text="Depth: N/A")
+lbl_depth     = ttk.Label(frame_telemetry, text="Depth: N/A")
 lbl_depth.grid(row=1, column=0, padx=5, pady=2, sticky="w")
-lbl_pitch = ttk.Label(frame_telemetry, text="Pitch: N/A")
-lbl_pitch.grid(row=1, column=1, padx=5, pady=2, sticky="w")
-lbl_roll = ttk.Label(frame_telemetry, text="Roll: N/A")
-lbl_roll.grid(row=1, column=2, padx=5, pady=2, sticky="w")
-lbl_yaw = ttk.Label(frame_telemetry, text="Yaw: N/A")
-lbl_yaw.grid(row=1, column=3, padx=5, pady=2, sticky="w")
 
-lbl_floor = ttk.Label(frame_telemetry, text="Floor Dist: N/A")
+lbl_pitch_val = ttk.Label(frame_telemetry, text="Pitch: N/A")
+lbl_pitch_val.grid(row=1, column=1, padx=5, pady=2, sticky="w")
+
+lbl_roll_val  = ttk.Label(frame_telemetry, text="Roll: N/A")
+lbl_roll_val.grid(row=1, column=2, padx=5, pady=2, sticky="w")
+
+lbl_yaw_val   = ttk.Label(frame_telemetry, text="Yaw: N/A")
+lbl_yaw_val.grid(row=1, column=3, padx=5, pady=2, sticky="w")
+
+lbl_floor     = ttk.Label(frame_telemetry, text="Floor Dist: N/A")
 lbl_floor.grid(row=2, column=0, padx=5, pady=2, sticky="w")
+
+lbl_leak      = ttk.Label(frame_telemetry, text="Leak: N/A")
+lbl_leak.grid(row=2, column=1, padx=5, pady=2, sticky="w")
+
+lbl_vbd1      = ttk.Label(frame_telemetry, text="VBD1 Pos: N/A")
+lbl_vbd1.grid(row=2, column=2, padx=5, pady=2, sticky="w")
+
+lbl_vbd2      = ttk.Label(frame_telemetry, text="VBD2 Pos: N/A")
+lbl_vbd2.grid(row=2, column=3, padx=5, pady=2, sticky="w")
+
+lbl_pitchpos  = ttk.Label(frame_telemetry, text="Pitch Act Pos: N/A")
+lbl_pitchpos.grid(row=3, column=0, padx=5, pady=2, sticky="w")
+
+lbl_rollpos   = ttk.Label(frame_telemetry, text="Roll Act Pos: N/A")
+lbl_rollpos.grid(row=3, column=1, padx=5, pady=2, sticky="w")
+
+lbl_bms1      = ttk.Label(frame_telemetry, text="BMS1: N/A")
+lbl_bms1.grid(row=4, column=0, padx=5, pady=2, sticky="w")
+
+lbl_bms2      = ttk.Label(frame_telemetry, text="BMS2: N/A")
+lbl_bms2.grid(row=4, column=1, padx=5, pady=2, sticky="w")
+
+lbl_bms3      = ttk.Label(frame_telemetry, text="BMS3: N/A")
+lbl_bms3.grid(row=4, column=2, padx=5, pady=2, sticky="w")
+
+lbl_bms4      = ttk.Label(frame_telemetry, text="BMS4: N/A")
+lbl_bms4.grid(row=4, column=3, padx=5, pady=2, sticky="w")
+
+lbl_bms5      = ttk.Label(frame_telemetry, text="BMS5: N/A")
+lbl_bms5.grid(row=5, column=0, padx=5, pady=2, sticky="w")
 
 
 # --- Control Frame (Pitch Only / VBD) ---
@@ -234,7 +250,6 @@ frame_control.columnconfigure(1, weight=1)
 lbl_control_header = ttk.Label(frame_control, text="Manual Controls", style="Header.TLabel")
 lbl_control_header.grid(row=0, column=0, columnspan=2, pady=(5, 10))
 
-# Pitch
 ttk.Label(frame_control, text="Pitch (°):").grid(row=1, column=0, sticky="e", padx=5, pady=2)
 entry_pitch = ttk.Entry(frame_control, width=10)
 entry_pitch.grid(row=1, column=1, padx=5, pady=2)
@@ -246,7 +261,6 @@ btn_set_pitch = ttk.Button(
 )
 btn_set_pitch.grid(row=2, column=0, columnspan=2, pady=8)
 
-# VBD State
 ttk.Label(frame_control, text="VBD State:").grid(row=3, column=0, sticky="e", padx=5, pady=2)
 vbd_state = tk.StringVar(value="IN")
 combo_vbd = ttk.Combobox(
@@ -319,39 +333,47 @@ btn_emergency.grid(row=8, column=0, columnspan=2, pady=(5, 10))
 
 
 # -----------------------------------------------------------
-# Periodic Telemetry Update in GUI
+# Update Telemetry Labels Periodically
 # -----------------------------------------------------------
 def update_telemetry_labels():
-    """
-    Update the telemetry labels from the shared telemetry dictionary.
-    Then schedule itself to run again after 200 ms.
-    """
     with telemetry_lock:
         lbl_depth.config(text=f"Depth: {telemetry['depth']}")
-        lbl_pitch.config(text=f"Pitch: {telemetry['pitch']}")
-        lbl_roll.config(text=f"Roll: {telemetry['roll']}")
-        lbl_yaw.config(text=f"Yaw: {telemetry['yaw']}")
+        lbl_pitch_val.config(text=f"Pitch: {telemetry['pitch']}")
+        lbl_roll_val.config(text=f"Roll: {telemetry['roll']}")
+        lbl_yaw_val.config(text=f"Yaw: {telemetry['yaw']}")
         lbl_floor.config(text=f"Floor Dist: {telemetry['floor_dist']}")
+        # If leak detected, show in red
+        if telemetry['leak'] == "LEAK":
+            lbl_leak.config(text="Leak: LEAK", foreground="#D9534F")
+        else:
+            lbl_leak.config(text="Leak: OK", foreground="#ECECEC")
+
+        lbl_vbd1.config(text=f"VBD1 Pos: {telemetry['vbd1']}")
+        lbl_vbd2.config(text=f"VBD2 Pos: {telemetry['vbd2']}")
+        lbl_pitchpos.config(text=f"Pitch Act Pos: {telemetry['pitchPos']}")
+        lbl_rollpos.config(text=f"Roll Act Pos: {telemetry['rollPos']}")
+
+        lbl_bms1.config(text=f"BMS1: {telemetry['bms1']}")
+        lbl_bms2.config(text=f"BMS2: {telemetry['bms2']}")
+        lbl_bms3.config(text=f"BMS3: {telemetry['bms3']}")
+        lbl_bms4.config(text=f"BMS4: {telemetry['bms4']}")
+        lbl_bms5.config(text=f"BMS5: {telemetry['bms5']}")
     root.after(200, update_telemetry_labels)
 
-
 # -----------------------------------------------------------
-# Application Shutdown
+# Graceful Shutdown
 # -----------------------------------------------------------
 def on_closing():
     if messagebox.askokcancel("Quit", "Do you really want to quit?"):
         root.destroy()
 
-
 root.protocol("WM_DELETE_WINDOW", on_closing)
 
 # -----------------------------------------------------------
-# Launch CAN Listener Thread and Start GUI Loop
+# Start Serial Listener Thread & GUI Loop
 # -----------------------------------------------------------
-if bus:
-    listener_thread = threading.Thread(target=can_listener, daemon=True)
-    listener_thread.start()
+if ser:
+    threading.Thread(target=serial_listener, daemon=True).start()
 
-# Kick off first telemetry update
 root.after(200, update_telemetry_labels)
 root.mainloop()
