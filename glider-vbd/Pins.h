@@ -3,8 +3,8 @@
 #pragma once
 
 // CAN bus
-#define CAN_TX 21
-#define CAN_RX 20
+#define CAN_TX GPIO_NUM_5
+#define CAN_RX GPIO_NUM_4
 
 // Motor control
 #define MOTOR_PWM_PIN 5

@@ -30,7 +30,7 @@ void TelemetryTask(void* param) {
 
     // BMS section
     JsonObject bms = doc.createNestedObject("bms");
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
       String key = "bms" + String(i + 1);
       JsonObject entry = bms.createNestedObject(key);
       getLatestBMS(i, entry);  // From CANHandler
@@ -67,9 +67,8 @@ void TelemetryTask(void* param) {
     // actuators["vbd2Position"] = VBD2_position;
 
     JsonObject vbd1 = actuators.createNestedObject("vbd1");
-    if (vbdArray[0].active) {
-      getLatestVBD(0, vbd1);
-    } else {
+    getLatestVBD(0, vbd1);
+    if (vbd1.isNull() || !vbd1.containsKey("id")) {
       vbd1["id"] = 1;
       vbd1["status"] = 0;
       vbd1["position"] = 100.0f;
@@ -77,9 +76,8 @@ void TelemetryTask(void* param) {
     }
 
     JsonObject vbd2 = actuators.createNestedObject("vbd2");
-    if (vbdArray[1].active) {
-      getLatestVBD(1, vbd2);
-    } else {
+    getLatestVBD(1, vbd2);
+    if (vbd2.isNull() || !vbd2.containsKey("id")) {
       vbd2["id"] = 2;
       vbd2["status"] = 0;
       vbd2["position"] = 100.0f;
@@ -95,8 +93,8 @@ void TelemetryTask(void* param) {
     serializeJson(doc, RS485);
     RS485.write('\n');  // Line break to delimit packets
 
-    serializeJsonPretty(doc, Serial);
-    Serial.println();
+    //serializeJsonPretty(doc, Serial);
+    //Serial.println();
 
     vTaskDelay(pdMS_TO_TICKS(1000));  // 1 Hz telemetry
   }
