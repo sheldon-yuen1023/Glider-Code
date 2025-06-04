@@ -5,7 +5,7 @@ void setup() {
   delay(1000);
   Serial.println("ESP32-S3 CAN Receiver (TX=4, RX=5)");
 
-  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)4, (gpio_num_t)5, TWAI_MODE_NORMAL);
+  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(GPIO_NUM_5, GPIO_NUM_4, TWAI_MODE_NORMAL);
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
   twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
@@ -42,3 +42,8 @@ void loop() {
     Serial.println("No CAN message received.");
   }
 }
+
+
+
+
+
