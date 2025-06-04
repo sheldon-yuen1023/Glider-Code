@@ -32,7 +32,7 @@
 // ----------------------
 volatile long encoderCount = 0;
 long homePos = 0;
-long maxPos = 6000000;
+long maxPos = 11000000;
 bool autoMove = false;
 bool movingForward = true;
 bool isForward = true;
