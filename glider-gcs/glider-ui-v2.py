@@ -7,7 +7,7 @@ import time
 
 # === Configuration ===
 COM_PORT = 'COM18'    # CANoverSerial bridge port
-BAUD_RATE = 9600    # Match Arduino/CAN bridge baud
+BAUD_RATE = 9600      # Match Arduino/CAN bridge baud
 
 # === Serial Setup (for both sending commands and receiving JSON telemetry) ===
 try:
@@ -64,7 +64,6 @@ def send_pitch():
     except ValueError:
         messagebox.showwarning("Invalid Input", "Pitch must be an integer.")
         return
-    # Format: PITCH,<pitch>
     cmd = f"PITCH,{pitch}"
     send_serial_command(cmd)
 
@@ -92,7 +91,6 @@ def start_mission():
         )
         return
 
-    # Format floats with one decimal if needed
     cmd = f"START,{depth_m:.2f},{floor_m:.2f},{cycles},{dive_angle},{rise_angle}"
     send_serial_command(cmd)
 
@@ -101,8 +99,22 @@ def stop_mission():
     send_serial_command("STOP")
 
 def emergency_surface():
-    """Send 'EMERGENCY'."""
-    send_serial_command("EMERGENCY")
+    """Prompt confirmation and send 'EMERGENCY' if confirmed."""
+    confirm = messagebox.askyesno(
+        title="Confirm Emergency Surface",
+        message="Are you sure you want to Emergency Surface?"
+    )
+    if confirm:
+        send_serial_command("EMERGENCY")
+
+def battery_off():
+    """Prompt confirmation and send 'BATT_OFF' if confirmed."""
+    confirm = messagebox.askyesno(
+        title="Confirm Battery Off",
+        message="Are you sure you want to turn Battery Off?"
+    )
+    if confirm:
+        send_serial_command("BATT_OFF")
 
 # -----------------------------------------------------------
 # Serial Listener Thread: Parse JSON Telemetry
@@ -240,7 +252,6 @@ lbl_bms4.grid(row=4, column=3, padx=5, pady=2, sticky="w")
 lbl_bms5      = ttk.Label(frame_telemetry, text="BMS5: N/A")
 lbl_bms5.grid(row=5, column=0, padx=5, pady=2, sticky="w")
 
-
 # --- Control Frame (Pitch Only / VBD) ---
 frame_control = ttk.Frame(root, relief="ridge")
 frame_control.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
@@ -278,7 +289,6 @@ btn_set_vbd = ttk.Button(
     command=send_vbd
 )
 btn_set_vbd.grid(row=4, column=0, columnspan=2, pady=8)
-
 
 # --- Mission Parameters Frame ---
 frame_mission = ttk.Frame(root, relief="ridge")
@@ -329,7 +339,15 @@ btn_emergency = ttk.Button(
     style="Danger.TButton",
     command=emergency_surface
 )
-btn_emergency.grid(row=8, column=0, columnspan=2, pady=(5, 10))
+btn_emergency.grid(row=8, column=0, columnspan=2, pady=(5, 5))
+
+btn_battery_off = ttk.Button(
+    frame_mission,
+    text="Battery Off",
+    style="Danger.TButton",
+    command=battery_off
+)
+btn_battery_off.grid(row=9, column=0, columnspan=2, pady=(0, 10))
 
 
 # -----------------------------------------------------------

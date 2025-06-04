@@ -2,7 +2,7 @@
 #include "driver/mcpwm.h"
 
 // ----------------------
-// Pin Assignments
+// Pin Assignment
 // ----------------------
 #define EN_PIN 7        // PWM control pin
 #define PH_PIN 6        // Direction control pin
