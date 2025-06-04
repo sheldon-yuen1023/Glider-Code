@@ -9,17 +9,16 @@ extern HardwareSerial RS485;
 
 // Dummy placeholders (replace with real data when ready)
 int currentSystemStateCode = 3;
-float pressureReading = 98.6;
-float sonarDistance = 3.4;
-float verticalVelocity = -0.12;
-float horizontalVelocity = 0.75;
+float pressureReading = 100;
+float sonarDistance = 100;
+float verticalVelocity = 100;
+float horizontalVelocity = 100;
 bool leak1 = false;
 bool leak2 = false;
-bool leak3 = true;
-float VBD1_position = 42.1;
-float VBD2_position = 38.6;
-float Pitch_position = 12.5;
-float Roll_position = 3.7;
+bool leak3 = false;
+
+float Pitch_position = 100;
+float Roll_position = 100;
 
 void TelemetryTask(void* param) {
   Serial.println("[TASK] Starting TelemetryTask");
@@ -31,7 +30,7 @@ void TelemetryTask(void* param) {
 
     // BMS section
     JsonObject bms = doc.createNestedObject("bms");
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
       String key = "bms" + String(i + 1);
       JsonObject entry = bms.createNestedObject(key);
       getLatestBMS(i, entry);  // From CANHandler
@@ -62,8 +61,31 @@ void TelemetryTask(void* param) {
 
     // Actuators
     JsonObject actuators = doc.createNestedObject("actuators");
-    actuators["vbd1Position"] = VBD1_position;
-    actuators["vbd2Position"] = VBD2_position;
+
+    // Replace these lines:
+    // actuators["vbd1Position"] = VBD1_position;
+    // actuators["vbd2Position"] = VBD2_position;
+
+    JsonObject vbd1 = actuators.createNestedObject("vbd1");
+    getLatestVBD(0, vbd1);
+    if (vbd1.isNull() || !vbd1.containsKey("id")) {
+      vbd1["id"] = 1;
+      vbd1["status"] = 0;
+      vbd1["position"] = 100.0f;
+      vbd1["timestamp"] = 0;
+    }
+
+    JsonObject vbd2 = actuators.createNestedObject("vbd2");
+    getLatestVBD(1, vbd2);
+    if (vbd2.isNull() || !vbd2.containsKey("id")) {
+      vbd2["id"] = 2;
+      vbd2["status"] = 0;
+      vbd2["position"] = 100.0f;
+      vbd2["timestamp"] = 0;
+    }
+
+
+    // These can stay as placeholders for now
     actuators["pitchPosition"] = Pitch_position;
     actuators["rollPosition"] = Roll_position;
 
@@ -71,8 +93,8 @@ void TelemetryTask(void* param) {
     serializeJson(doc, RS485);
     RS485.write('\n');  // Line break to delimit packets
 
-    serializeJsonPretty(doc, Serial);
-    Serial.println();
+    //serializeJsonPretty(doc, Serial);
+    //Serial.println();
 
     vTaskDelay(pdMS_TO_TICKS(1000));  // 1 Hz telemetry
   }
