@@ -25,14 +25,14 @@
 #define MIN_DUTY 10
 #define ACCEL_STEP 1
 #define LOOP_DELAY 20
-#define MIN_POS 50000  // New minimum position
+#define MIN_POS 10000  // New minimum position
 
 // ----------------------
 // State Variables
 // ----------------------
 volatile long encoderCount = 0;
 long homePos = 0;
-long maxPos = 20000000;
+long maxPos = 6000000;
 bool autoMove = false;
 bool movingForward = true;
 bool isForward = true;
@@ -249,4 +249,3 @@ void loop() {
 
   delay(LOOP_DELAY);
 }
-
