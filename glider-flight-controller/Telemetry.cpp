@@ -88,6 +88,8 @@ void TelemetryTask(void* param) {
     // These can stay as placeholders for now
     actuators["pitchPosition"] = Pitch_position;
     actuators["rollPosition"] = Roll_position;
+    
+    doc["ready"] = true;  // Flag to signal ground station it's safe to send command now
 
     // Send over RS485 and USB for debug
     serializeJson(doc, RS485);
