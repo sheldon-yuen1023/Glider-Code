@@ -4,6 +4,7 @@ import threading
 import json
 import serial
 import time
+from time import time as current_time  # High-resolution timestamp
 
 # === Configuration ===
 COM_PORT = 'COM18'    # CANoverSerial bridge port
@@ -16,6 +17,12 @@ try:
 except serial.SerialException as e:
     messagebox.showerror("Serial Port Error", f"Could not open {COM_PORT}:\n{e}")
     ser = None
+
+# -----------------------------------------------------------
+# Timing Control to Avoid Collisions
+# -----------------------------------------------------------
+last_telemetry_time = 0
+TELEMETRY_GRACE_MS = 100  # 100 ms after telemetry during which commands wait
 
 # -----------------------------------------------------------
 # Shared Telemetry Dictionary + Lock
@@ -32,22 +39,28 @@ telemetry = {
     'vbd2':        "N/A",
     'pitchPos':    "N/A",
     'rollPos':     "N/A",
-    'bms1':        "N/A",
-    'bms2':        "N/A",
-    'bms3':        "N/A",
-    'bms4':        "N/A",
-    'bms5':        "N/A"
+    'bms':         "N/A",  # Only show BMS2 as "bms"
 }
 
 # -----------------------------------------------------------
-# Helper: Send a text command over serial
+# Helper: Send a text command over serial with delay logic
 # -----------------------------------------------------------
 def send_serial_command(cmd_str: str):
     """
-    Send a command string over the serial link (ending with newline).
+    Send a command string over serial, ensuring at least TELEMETRY_GRACE_MS have passed
+    since the last telemetry JSON was received.
     """
+    global last_telemetry_time
+
     if not ser:
         return
+
+    # Calculate elapsed time since last telemetry in milliseconds
+    elapsed_ms = (current_time() - last_telemetry_time) * 1000
+    if elapsed_ms < TELEMETRY_GRACE_MS:
+        wait_time = (TELEMETRY_GRACE_MS - elapsed_ms) / 1000.0
+        time.sleep(wait_time)
+
     try:
         ser.write((cmd_str + "\n").encode('utf-8'))
         print(f"Sent: {cmd_str}")
@@ -72,6 +85,19 @@ def send_vbd():
     state = vbd_state.get()
     cmd = f"VBD,{state}"
     send_serial_command(cmd)
+
+def stop_vbd():
+    """Send a VBD STOP command: 'VBD,STOP'."""
+    send_serial_command("VBD,STOP")
+
+def zero_vbd():
+    """Send a Zero VBD command: 'VBD,ZERO'."""
+    confirm = messagebox.askyesno(
+        title="Confirm Zero VBD",
+        message="Are you sure you want to zero the VBD?"
+    )
+    if confirm:
+        send_serial_command("VBD,ZERO")
 
 def start_mission():
     """
@@ -122,8 +148,10 @@ def battery_off():
 def serial_listener():
     """
     Read lines from serial (each line is JSON),
-    parse and update telemetry dict.
+    parse and update telemetry dict, and record timestamp.
     """
+    global last_telemetry_time
+
     if not ser:
         return
     while True:
@@ -132,11 +160,11 @@ def serial_listener():
             if not raw:
                 continue
             data = json.loads(raw)
+
             with telemetry_lock:
                 # Pressure → depth
                 pressure_kpa = data.get('sensors', {}).get('pressure')
                 if pressure_kpa is not None:
-                    # Rough conversion: 1 kPa ≈ 0.01 m depth (freshwater)
                     depth_m = (pressure_kpa - 101.3) * 0.01
                     telemetry['depth'] = f"{depth_m:.2f} m"
                 else:
@@ -150,7 +178,9 @@ def serial_listener():
 
                 # Distance to bottom
                 dist_bottom = data.get('sensors', {}).get('distanceToBottom')
-                telemetry['floor_dist'] = f"{dist_bottom:.2f} m" if dist_bottom is not None else "N/A"
+                telemetry['floor_dist'] = (
+                    f"{dist_bottom:.2f} m" if dist_bottom is not None else "N/A"
+                )
 
                 # Leak sensors
                 leaks = data.get('sensors', {}).get('leakSensors', {})
@@ -158,21 +188,28 @@ def serial_listener():
 
                 # Actuator positions
                 actuators = data.get('actuators', {})
-                telemetry['vbd1']     = f"{actuators.get('vbd1Position', 0):.1f}"
-                telemetry['vbd2']     = f"{actuators.get('vbd2Position', 0):.1f}"
+
+                # vbd1 / vbd2 are nested under "vbd1" and "vbd2" keys
+                vbd1_obj = actuators.get('vbd1', {})
+                vbd2_obj = actuators.get('vbd2', {})
+                telemetry['vbd1'] = f"{vbd1_obj.get('position', 0):.1f}"
+                telemetry['vbd2'] = f"{vbd2_obj.get('position', 0):.1f}"
+
+                # pitchPosition and rollPosition remain as direct fields
                 telemetry['pitchPos'] = f"{actuators.get('pitchPosition', 0):.1f}"
                 telemetry['rollPos']  = f"{actuators.get('rollPosition', 0):.1f}"
 
-                # BMS readings for bms1..bms5
-                bms_data = data.get('bms', {})
-                for idx in range(1, 6):
-                    key = f"bms{idx}"
-                    entry = bms_data.get(key, {})
-                    if entry:
-                        parts = [f"{fld}: {val}" for fld, val in entry.items()]
-                        telemetry[key] = "; ".join(parts)
-                    else:
-                        telemetry[key] = "N/A"
+                # Only read BMS2 and store as 'bms'
+                bms2_entry = data.get('bms', {}).get('bms2', {})
+                if bms2_entry:
+                    parts = [f"{fld}: {val}" for fld, val in bms2_entry.items()]
+                    telemetry['bms'] = "; ".join(parts)
+                else:
+                    telemetry['bms'] = "N/A"
+
+            # Record the time telemetry was received
+            last_telemetry_time = current_time()
+
         except json.JSONDecodeError:
             continue
         except Exception:
@@ -201,11 +238,11 @@ root.rowconfigure(1, weight=1, pad=10)
 # --- Telemetry Frame ---
 frame_telemetry = ttk.Frame(root, relief="ridge")
 frame_telemetry.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=10, pady=5)
-for i in range(4):
+for i in range(3):
     frame_telemetry.columnconfigure(i, weight=1)
 
 lbl_tele_header = ttk.Label(frame_telemetry, text="Telemetry", style="Header.TLabel")
-lbl_tele_header.grid(row=0, column=0, columnspan=4, pady=(5, 10))
+lbl_tele_header.grid(row=0, column=0, columnspan=3, pady=(5, 10))
 
 lbl_depth     = ttk.Label(frame_telemetry, text="Depth: N/A")
 lbl_depth.grid(row=1, column=0, padx=5, pady=2, sticky="w")
@@ -217,42 +254,30 @@ lbl_roll_val  = ttk.Label(frame_telemetry, text="Roll: N/A")
 lbl_roll_val.grid(row=1, column=2, padx=5, pady=2, sticky="w")
 
 lbl_yaw_val   = ttk.Label(frame_telemetry, text="Yaw: N/A")
-lbl_yaw_val.grid(row=1, column=3, padx=5, pady=2, sticky="w")
+lbl_yaw_val.grid(row=2, column=0, padx=5, pady=2, sticky="w")
 
 lbl_floor     = ttk.Label(frame_telemetry, text="Floor Dist: N/A")
-lbl_floor.grid(row=2, column=0, padx=5, pady=2, sticky="w")
+lbl_floor.grid(row=2, column=1, padx=5, pady=2, sticky="w")
 
 lbl_leak      = ttk.Label(frame_telemetry, text="Leak: N/A")
-lbl_leak.grid(row=2, column=1, padx=5, pady=2, sticky="w")
+lbl_leak.grid(row=2, column=2, padx=5, pady=2, sticky="w")
 
 lbl_vbd1      = ttk.Label(frame_telemetry, text="VBD1 Pos: N/A")
-lbl_vbd1.grid(row=2, column=2, padx=5, pady=2, sticky="w")
+lbl_vbd1.grid(row=3, column=0, padx=5, pady=2, sticky="w")
 
 lbl_vbd2      = ttk.Label(frame_telemetry, text="VBD2 Pos: N/A")
-lbl_vbd2.grid(row=2, column=3, padx=5, pady=2, sticky="w")
+lbl_vbd2.grid(row=3, column=1, padx=5, pady=2, sticky="w")
 
 lbl_pitchpos  = ttk.Label(frame_telemetry, text="Pitch Act Pos: N/A")
-lbl_pitchpos.grid(row=3, column=0, padx=5, pady=2, sticky="w")
+lbl_pitchpos.grid(row=3, column=2, padx=5, pady=2, sticky="w")
 
 lbl_rollpos   = ttk.Label(frame_telemetry, text="Roll Act Pos: N/A")
-lbl_rollpos.grid(row=3, column=1, padx=5, pady=2, sticky="w")
+lbl_rollpos.grid(row=4, column=0, padx=5, pady=2, sticky="w")
 
-lbl_bms1      = ttk.Label(frame_telemetry, text="BMS1: N/A")
-lbl_bms1.grid(row=4, column=0, padx=5, pady=2, sticky="w")
+lbl_bms       = ttk.Label(frame_telemetry, text="BMS: N/A")
+lbl_bms.grid(row=4, column=1, padx=5, pady=2, sticky="w")
 
-lbl_bms2      = ttk.Label(frame_telemetry, text="BMS2: N/A")
-lbl_bms2.grid(row=4, column=1, padx=5, pady=2, sticky="w")
-
-lbl_bms3      = ttk.Label(frame_telemetry, text="BMS3: N/A")
-lbl_bms3.grid(row=4, column=2, padx=5, pady=2, sticky="w")
-
-lbl_bms4      = ttk.Label(frame_telemetry, text="BMS4: N/A")
-lbl_bms4.grid(row=4, column=3, padx=5, pady=2, sticky="w")
-
-lbl_bms5      = ttk.Label(frame_telemetry, text="BMS5: N/A")
-lbl_bms5.grid(row=5, column=0, padx=5, pady=2, sticky="w")
-
-# --- Control Frame (Pitch Only / VBD) ---
+# --- Control Frame (Pitch Only / VBD / Zero VBD / Stop VBD) ---
 frame_control = ttk.Frame(root, relief="ridge")
 frame_control.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 frame_control.columnconfigure(0, weight=1)
@@ -261,17 +286,19 @@ frame_control.columnconfigure(1, weight=1)
 lbl_control_header = ttk.Label(frame_control, text="Manual Controls", style="Header.TLabel")
 lbl_control_header.grid(row=0, column=0, columnspan=2, pady=(5, 10))
 
-ttk.Label(frame_control, text="Pitch (°):").grid(row=1, column=0, sticky="e", padx=5, pady=2)
+# Pitch controls
+ttk.Label(frame_control, text="Pitch (mm):").grid(row=1, column=0, sticky="e", padx=5, pady=2)
 entry_pitch = ttk.Entry(frame_control, width=10)
 entry_pitch.grid(row=1, column=1, padx=5, pady=2)
 
 btn_set_pitch = ttk.Button(
     frame_control,
-    text="Set Pitch",
+    text="Set Pitch (mm)",
     command=send_pitch
 )
 btn_set_pitch.grid(row=2, column=0, columnspan=2, pady=8)
 
+# VBD controls
 ttk.Label(frame_control, text="VBD State:").grid(row=3, column=0, sticky="e", padx=5, pady=2)
 vbd_state = tk.StringVar(value="IN")
 combo_vbd = ttk.Combobox(
@@ -289,6 +316,23 @@ btn_set_vbd = ttk.Button(
     command=send_vbd
 )
 btn_set_vbd.grid(row=4, column=0, columnspan=2, pady=8)
+
+# Stop VBD button
+btn_stop_vbd = ttk.Button(
+    frame_control,
+    text="Stop VBD",
+    command=stop_vbd
+)
+btn_stop_vbd.grid(row=5, column=0, columnspan=2, pady=8)
+
+# Zero VBD button
+btn_zero_vbd = ttk.Button(
+    frame_control,
+    text="Zero VBD",
+    style="Danger.TButton",
+    command=zero_vbd
+)
+btn_zero_vbd.grid(row=6, column=0, columnspan=2, pady=(0, 10))
 
 # --- Mission Parameters Frame ---
 frame_mission = ttk.Frame(root, relief="ridge")
@@ -349,7 +393,6 @@ btn_battery_off = ttk.Button(
 )
 btn_battery_off.grid(row=9, column=0, columnspan=2, pady=(0, 10))
 
-
 # -----------------------------------------------------------
 # Update Telemetry Labels Periodically
 # -----------------------------------------------------------
@@ -371,11 +414,9 @@ def update_telemetry_labels():
         lbl_pitchpos.config(text=f"Pitch Act Pos: {telemetry['pitchPos']}")
         lbl_rollpos.config(text=f"Roll Act Pos: {telemetry['rollPos']}")
 
-        lbl_bms1.config(text=f"BMS1: {telemetry['bms1']}")
-        lbl_bms2.config(text=f"BMS2: {telemetry['bms2']}")
-        lbl_bms3.config(text=f"BMS3: {telemetry['bms3']}")
-        lbl_bms4.config(text=f"BMS4: {telemetry['bms4']}")
-        lbl_bms5.config(text=f"BMS5: {telemetry['bms5']}")
+        # Only one BMS label, showing BMS2 as "BMS"
+        lbl_bms.config(text=f"BMS: {telemetry['bms']}")
+
     root.after(200, update_telemetry_labels)
 
 # -----------------------------------------------------------
