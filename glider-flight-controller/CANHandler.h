@@ -6,5 +6,5 @@
 void initCAN();                 // Call once in setup
 void startCANReceiveTask();     // Starts background CAN reader
 void getLatestBMS(int index, JsonObject& obj);  // For JSON module
-void getLatestVBD(int index, JsonObject& obj);
+bool getLatestVBD(int index, JsonObject& obj);
 void sendVBDCommand(uint8_t vbd_id, uint8_t command);

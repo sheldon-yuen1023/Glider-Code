@@ -9,16 +9,16 @@ extern HardwareSerial RS485;
 
 // Dummy placeholders (replace with real data when ready)
 int currentSystemStateCode = 3;
-float pressureReading = 100;
-float sonarDistance = 100;
-float verticalVelocity = 100;
-float horizontalVelocity = 100;
+float pressureReading = 101;
+float sonarDistance = 101;
+float verticalVelocity = 101;
+float horizontalVelocity = 101;
 bool leak1 = false;
 bool leak2 = false;
 bool leak3 = false;
 
-float Pitch_position = 100;
-float Roll_position = 100;
+float Pitch_position = 101;
+float Roll_position = 101;
 
 void TelemetryTask(void* param) {
   Serial.println("[TASK] Starting TelemetryTask");
@@ -62,25 +62,19 @@ void TelemetryTask(void* param) {
     // Actuators
     JsonObject actuators = doc.createNestedObject("actuators");
 
-    // Replace these lines:
-    // actuators["vbd1Position"] = VBD1_position;
-    // actuators["vbd2Position"] = VBD2_position;
-
     JsonObject vbd1 = actuators.createNestedObject("vbd1");
-    getLatestVBD(0, vbd1);
-    if (vbd1.isNull() || !vbd1.containsKey("id")) {
+    if (!getLatestVBD(0, vbd1)) {
       vbd1["id"] = 1;
       vbd1["status"] = 0;
-      vbd1["position"] = 100.0f;
+      vbd1["position"] = -1.0f;  // Better default than 101
       vbd1["timestamp"] = 0;
     }
 
     JsonObject vbd2 = actuators.createNestedObject("vbd2");
-    getLatestVBD(1, vbd2);
-    if (vbd2.isNull() || !vbd2.containsKey("id")) {
+    if (!getLatestVBD(1, vbd2)) {
       vbd2["id"] = 2;
       vbd2["status"] = 0;
-      vbd2["position"] = 100.0f;
+      vbd2["position"] = -1.0f;
       vbd2["timestamp"] = 0;
     }
 

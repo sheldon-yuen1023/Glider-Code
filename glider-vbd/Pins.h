@@ -1,6 +1,7 @@
-// Pins.h — Centralized pin configuration
-
 #pragma once
+
+extern long homePos;
+extern long maxPos;
 
 // CAN bus
 #define CAN_TX GPIO_NUM_5
