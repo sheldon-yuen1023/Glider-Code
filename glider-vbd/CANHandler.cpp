@@ -3,12 +3,13 @@
 #include <driver/twai.h>
 
 // ========== CONFIG ========== //
-#define VBD_NODE_ID 1               // Change to 2 if this is VBD2
+#define VBD_NODE_ID 2              // Change to 2 if this is VBD2
 #define TELEMETRY_SEND_INTERVAL 1000  // ms
 
 // ========== STATE ========== //
 static uint8_t currentState = VBD_AWAITING_COMMAND;
-static float currentPosition = 12.3;  // placeholder position
+static float currentPosition = 500;  // placeholder position
+extern volatile long encoderCount;
 
 // ========== COMMAND STATE ========== //
 static bool newCommandAvailable = false;
@@ -32,12 +33,24 @@ void initCAN() {
   }
 }
 
+// ========== Command Translation ========== //
+
+const char* commandToString(uint8_t cmd) {
+  switch (cmd) {
+    case 1: return "IN";
+    case 2: return "MID";
+    case 3: return "OUT";
+    case 4: return "ZERO";
+    default: return "UNKNOWN";
+  }
+}
+
 // ========== MAIN LOOP HANDLER ========== //
 void loopCAN() {
   // --- Handle RX ---
   twai_message_t rxMsg;
   if (twai_receive(&rxMsg, 0) == ESP_OK) {
-    if (rxMsg.identifier == 0x200 + VBD_NODE_ID && rxMsg.data_length_code >= 1) {
+    if (rxMsg.identifier == 0x210 + (VBD_NODE_ID - 1) && rxMsg.data_length_code >= 1){
       receivedCommand = rxMsg.data[0];
       newCommandAvailable = true;
 
@@ -47,13 +60,17 @@ void loopCAN() {
         targetPosition = raw / 10.0f;
       }
 
-      Serial.print("[CAN RX] Command: "); Serial.println(receivedCommand);
+      Serial.printf("[CAN RX] Command: %d (%s)\n", receivedCommand, commandToString(receivedCommand));
     }
   }
 
   // --- Handle TX ---
   if (millis() - lastTelemetrySent >= TELEMETRY_SEND_INTERVAL) {
     lastTelemetrySent = millis();
+
+    // UPDATE real position from encoder:
+    currentPosition = 100.0f * (encoderCount - homePos) / (maxPos - homePos);
+    currentPosition = constrain(currentPosition, 0.0f, 100.0f);
 
     twai_message_t txMsg = {};
     txMsg.identifier = 0x300 + VBD_NODE_ID;

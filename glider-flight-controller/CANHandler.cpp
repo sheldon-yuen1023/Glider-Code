@@ -52,15 +52,15 @@ void CANReceiveTask(void* param) {
         b.active = true;
       }
 
-      // ---- VBD Data (0x200 – 0x201) ----
-      else if (msg.data_length_code == 4 && msg.identifier >= 0x200 && msg.identifier <= 0x201) {
-        int idx = msg.identifier - 0x200;
-        VBDData& v = vbdArray[idx];
-        v.id = msg.data[0];
-        v.status = msg.data[1];
-        v.position = (msg.data[2] | (msg.data[3] << 8)) / 100.0f;
-        v.lastUpdate = millis();
-        v.active = true;
+      else if (msg.data_length_code == 4 && msg.identifier >= 0x301 && msg.identifier <= 0x302) {
+          int idx = msg.identifier - 0x301;  // 0x301→0, 0x302→1
+          VBDData& v = vbdArray[idx];
+          v.id       = msg.data[0];
+          v.status   = msg.data[1];
+          uint16_t rawPos = (msg.data[2] << 8) | msg.data[3];
+          v.position = rawPos / 10.0f;
+          v.lastUpdate = millis();
+          v.active   = true;
       }
     }
   }
@@ -96,13 +96,14 @@ void getLatestBMS(int index, JsonObject& obj) {
   obj["timestamp"] = b.lastUpdate;
 }
 
-void getLatestVBD(int index, JsonObject& obj) {
-  if (index < 0 || index >= 2 || !vbdArray[index].active) return;
+bool getLatestVBD(int index, JsonObject& obj) {
+  if (index < 0 || index >= 2 || !vbdArray[index].active) return false;
   VBDData& v = vbdArray[index];
   obj["id"] = v.id;
   obj["status"] = v.status;
   obj["position"] = v.position;
   obj["timestamp"] = v.lastUpdate;
+  return true;
 }
 
 // ---- Command Sender ----

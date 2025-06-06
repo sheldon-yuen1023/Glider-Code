@@ -242,8 +242,8 @@ void loop() {
 
   // ---- Live Encoder Display ----
   if (millis() - lastPrintTime >= 200) {
-    Serial.print("Encoder: ");
-    Serial.println(encoderCount);
+    //Serial.print("Encoder: ");
+    //Serial.println(encoderCount);
     lastPrintTime = millis();
   }
 
