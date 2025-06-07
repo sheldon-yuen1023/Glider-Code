@@ -22,7 +22,7 @@ except serial.SerialException as e:
 # Timing Control to Avoid Collisions
 # -----------------------------------------------------------
 last_telemetry_time = 0
-TELEMETRY_GRACE_MS = 100  # 100 ms after telemetry during which commands wait
+TELEMETRY_GRACE_MS = 30  # 30 ms after telemetry during which commands wait
 
 # -----------------------------------------------------------
 # Shared Telemetry Dictionary + Lock
@@ -241,41 +241,59 @@ frame_telemetry.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=10, pady
 for i in range(3):
     frame_telemetry.columnconfigure(i, weight=1)
 
-lbl_tele_header = ttk.Label(frame_telemetry, text="Telemetry", style="Header.TLabel")
-lbl_tele_header.grid(row=0, column=0, columnspan=3, pady=(5, 10))
+# === TELEMETRY GROUPING (MODIFIED) ===
+# Group 1: Depth and Floor Distance
+frame_depth_floor = ttk.Frame(frame_telemetry)
+frame_depth_floor.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+lbl_depth = ttk.Label(frame_depth_floor, text="Depth: N/A")
+lbl_depth.pack(anchor="w")
+lbl_floor = ttk.Label(frame_depth_floor, text="Floor Dist: N/A")
+lbl_floor.pack(anchor="w")
 
-lbl_depth     = ttk.Label(frame_telemetry, text="Depth: N/A")
-lbl_depth.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+# Group 2: Pitch, Roll, Yaw
+frame_attitude = ttk.Frame(frame_telemetry)
+frame_attitude.grid(row=1, column=1, padx=5, pady=2, sticky="w")
+lbl_pitch_val = ttk.Label(frame_attitude, text="Pitch: N/A")
+lbl_pitch_val.pack(anchor="w")
+lbl_roll_val = ttk.Label(frame_attitude, text="Roll: N/A")
+lbl_roll_val.pack(anchor="w")
+lbl_yaw_val = ttk.Label(frame_attitude, text="Yaw: N/A")
+lbl_yaw_val.pack(anchor="w")
 
-lbl_pitch_val = ttk.Label(frame_telemetry, text="Pitch: N/A")
-lbl_pitch_val.grid(row=1, column=1, padx=5, pady=2, sticky="w")
+# Group 3: VBD1, VBD2, Leak
+frame_vbd_leak = ttk.Frame(frame_telemetry)
+frame_vbd_leak.grid(row=1, column=2, padx=5, pady=2, sticky="w")
+lbl_vbd1 = ttk.Label(frame_vbd_leak, text="VBD1 Pos: N/A")
+lbl_vbd1.pack(anchor="w")
+lbl_vbd2 = ttk.Label(frame_vbd_leak, text="VBD2 Pos: N/A")
+lbl_vbd2.pack(anchor="w")
+lbl_leak = ttk.Label(frame_vbd_leak, text="Leak: N/A")
+lbl_leak.pack(anchor="w")
 
-lbl_roll_val  = ttk.Label(frame_telemetry, text="Roll: N/A")
-lbl_roll_val.grid(row=1, column=2, padx=5, pady=2, sticky="w")
+# Group 4: Pitch and Roll Actuator Positions
+frame_actuators = ttk.Frame(frame_telemetry)
+frame_actuators.grid(row=2, column=0, padx=5, pady=2, sticky="w")
+lbl_pitchpos = ttk.Label(frame_actuators, text="Pitch Act Pos: N/A")
+lbl_pitchpos.pack(anchor="w")
+lbl_rollpos = ttk.Label(frame_actuators, text="Roll Act Pos: N/A")
+lbl_rollpos.pack(anchor="w")
 
-lbl_yaw_val   = ttk.Label(frame_telemetry, text="Yaw: N/A")
-lbl_yaw_val.grid(row=2, column=0, padx=5, pady=2, sticky="w")
+# Group 5: BMS Info
+frame_bms = ttk.Frame(frame_telemetry)
+frame_bms.grid(row=2, column=1, padx=5, pady=2, sticky="w")
+lbl_bms = ttk.Label(frame_bms, text="BMS: N/A")
+lbl_bms.pack(anchor="w")
 
-lbl_floor     = ttk.Label(frame_telemetry, text="Floor Dist: N/A")
-lbl_floor.grid(row=2, column=1, padx=5, pady=2, sticky="w")
-
-lbl_leak      = ttk.Label(frame_telemetry, text="Leak: N/A")
-lbl_leak.grid(row=2, column=2, padx=5, pady=2, sticky="w")
-
-lbl_vbd1      = ttk.Label(frame_telemetry, text="VBD1 Pos: N/A")
-lbl_vbd1.grid(row=3, column=0, padx=5, pady=2, sticky="w")
-
-lbl_vbd2      = ttk.Label(frame_telemetry, text="VBD2 Pos: N/A")
-lbl_vbd2.grid(row=3, column=1, padx=5, pady=2, sticky="w")
-
-lbl_pitchpos  = ttk.Label(frame_telemetry, text="Pitch Act Pos: N/A")
-lbl_pitchpos.grid(row=3, column=2, padx=5, pady=2, sticky="w")
-
-lbl_rollpos   = ttk.Label(frame_telemetry, text="Roll Act Pos: N/A")
-lbl_rollpos.grid(row=4, column=0, padx=5, pady=2, sticky="w")
-
-lbl_bms       = ttk.Label(frame_telemetry, text="BMS: N/A")
-lbl_bms.grid(row=4, column=1, padx=5, pady=2, sticky="w")
+# === Instruction Box ===
+frame_instructions = ttk.Frame(root, relief="ridge")
+frame_instructions.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(5,10))
+tt_instruction = (
+    "IMPORTANT: Before sending any commands or starting a mission,\n"
+    "the VBDs must be zeroed using the 'Zero VBD' button.\n"
+    "Failure to do so may cause incorrect depth regulation and instability."
+)
+lbl_instructions = ttk.Label(frame_instructions, text=tt_instruction, foreground="#FFD966", font=("Helvetica", 10, "italic"))
+lbl_instructions.pack(padx=5, pady=5)
 
 # --- Control Frame (Pitch Only / VBD / Zero VBD / Stop VBD) ---
 frame_control = ttk.Frame(root, relief="ridge")
