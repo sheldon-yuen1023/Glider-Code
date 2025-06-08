@@ -3,7 +3,7 @@
 #include <driver/twai.h>
 
 // ========== CONFIG ========== //
-#define VBD_NODE_ID 2              // Change to 2 if this is VBD2
+#define VBD_NODE_ID 1              // Change to 2 if this is VBD2
 #define TELEMETRY_SEND_INTERVAL 1000  // ms
 
 // ========== STATE ========== //
