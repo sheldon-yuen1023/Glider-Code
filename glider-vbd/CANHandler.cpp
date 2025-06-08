@@ -41,6 +41,7 @@ const char* commandToString(uint8_t cmd) {
     case 2: return "MID";
     case 3: return "OUT";
     case 4: return "ZERO";
+    case 5: return "STOP";
     default: return "UNKNOWN";
   }
 }

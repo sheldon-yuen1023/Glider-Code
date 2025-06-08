@@ -7,8 +7,26 @@ extern HardwareSerial RS485;
 
 // Function to handle the command string
 void handleCommand(String cmd) {
-  Serial.print("[RS485 CMD] ");
-  Serial.println(cmd);  // Debug: show raw command
+    // strip whitespace…
+  cmd.trim();
+
+  // if there’s garbage before “VBD,”, drop it and keep only the real VBD,XYZ
+  int vbdIdx = cmd.lastIndexOf("VBD,");
+  if (vbdIdx >= 0) {
+    cmd = cmd.substring(vbdIdx);
+  }
+  // otherwise if it contains “BATT_OFF” anywhere, force it to exactly that
+  else if (cmd.indexOf("BATT_OFF") >= 0) {
+    cmd = "BATT_OFF";
+  }
+  // no recognizable command suffix → ignore
+  else {
+    return;
+  }
+
+  // now you can safely print the cleaned command:
+  Serial.print("[RS485 CMD] parsed → ");
+  Serial.println(cmd);
 
   if (cmd.startsWith("VBD,")) {
     String arg = cmd.substring(4);
@@ -18,6 +36,7 @@ void handleCommand(String cmd) {
     else if (arg == "MID")  command = 2;
     else if (arg == "OUT")  command = 3;
     else if (arg == "ZERO") command = 4;
+    else if (arg == "STOP") command = 5;
     else return;  // Unknown command
 
     // Send to both VBDs
@@ -27,7 +46,11 @@ void handleCommand(String cmd) {
     sendVBDCommand(1, command);  // VBD2
     Serial.printf("[DEBUG] Forwarded VBD command %d to VBD2\n", command);
   }
-
+  else if (cmd == "BATT_OFF") {
+  // send a remote shutdown to BMS
+  sendBMSShutdown();
+  Serial.println("[DEBUG] Forwarded BATT_OFF → BMS shutdown (CAN 0x210, data 0x01)");
+}
   // TODO: Handle other command types here
 }
 

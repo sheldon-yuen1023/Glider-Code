@@ -118,3 +118,18 @@ void sendVBDCommand(uint8_t vbd_id, uint8_t command) {
 
   twai_transmit(&msg, pdMS_TO_TICKS(100));
 }
+
+// ---------------------------------------------------------
+// Send a one‐byte CAN frame to the BMS asking it to turn off
+// ID = 0x210 (as chosen in the BMS code), data[0] = 0x01
+// ---------------------------------------------------------
+void sendBMSShutdown() {
+  twai_message_t msg = {};
+  msg.identifier = 0x220;      // same ID that the BMS code is listening on
+  msg.extd = 0;
+  msg.rtr = 0;
+  msg.data_length_code = 1;
+  msg.data[0] = 0x01;          // “shutdown” command byte
+  twai_transmit(&msg, pdMS_TO_TICKS(100));
+}
+

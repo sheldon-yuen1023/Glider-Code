@@ -8,3 +8,4 @@ void startCANReceiveTask();     // Starts background CAN reader
 void getLatestBMS(int index, JsonObject& obj);  // For JSON module
 bool getLatestVBD(int index, JsonObject& obj);
 void sendVBDCommand(uint8_t vbd_id, uint8_t command);
+void sendBMSShutdown(); // send a “remote shutdown” packet to the BMS

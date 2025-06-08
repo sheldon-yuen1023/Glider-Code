@@ -31,12 +31,12 @@
 #define CAN_TX_PIN 21                 // CAN TX pin
 #define CAN_RX_PIN 20                 // CAN RX pin
 
-#define CAN_ID_BMS_SHUTDOWN 0x210  // Reserved CAN ID for remote shutdown command
+#define CAN_ID_BMS_SHUTDOWN 0x220  // Reserved CAN ID for remote shutdown command
 
 
 // Safety limits
 #define CURRENT_LIMIT 30.0            // Max allowable current (A)
-#define VOLTAGE_MIN 19                // Minimum safe voltage (V)
+#define VOLTAGE_MIN 0              // Minimum safe voltage (V)
 #define TEMP_LIMIT_C 40.0             // Maximum safe temperature (°C)
 
 // Timers for update loops

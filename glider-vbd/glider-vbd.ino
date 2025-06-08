@@ -23,7 +23,7 @@
 // ----------------------
 // Motion Parameters
 // ----------------------
-#define MAX_DUTY    40
+#define MAX_DUTY    75
 #define MIN_DUTY    10
 #define ACCEL_STEP  1
 #define LOOP_DELAY  20
@@ -149,13 +149,25 @@ void loop() {
         break;
 
       case 4:  // VBD,ZERO
-        Serial.println("CAN → Homing (limit switch), then go to maxPos");
+        Serial.println("CAN → Homing (limit switch), then go to MIN_POS");
         homing = true;
-        goToMinAfterHoming = false;
+        goToMinAfterHoming = true;     // ← now we’ll go TO MIN_POS afterwards
         motorState = 1;
         targetDuty = MAX_DUTY;
-        digitalWrite(PH_PIN, LOW);  // Move inward toward limit switch
+        digitalWrite(PH_PIN, LOW);     // Move inward toward limit switch
         isForward = false;
+        break;
+      
+      case 5:  // STOP
+        Serial.println("CAN → STOP motor immediately");
+        // cancel any motion or homing
+        autoMove         = false;
+        homing           = false;
+        goToMinAfterHoming = false;
+        // zero out drive
+        motorState       = 0;
+        targetDuty       = 0;
+        moveTarget       = -1;
         break;
 
       default:
