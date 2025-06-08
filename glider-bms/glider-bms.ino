@@ -31,9 +31,12 @@
 #define CAN_TX_PIN 21                 // CAN TX pin
 #define CAN_RX_PIN 20                 // CAN RX pin
 
+#define CAN_ID_BMS_SHUTDOWN 0x220  // Reserved CAN ID for remote shutdown command
+
+
 // Safety limits
-#define CURRENT_LIMIT 15.0            // Max allowable current (A)
-#define VOLTAGE_MIN 0                 // Minimum safe voltage (V)
+#define CURRENT_LIMIT 30.0            // Max allowable current (A)
+#define VOLTAGE_MIN 0              // Minimum safe voltage (V)
 #define TEMP_LIMIT_C 40.0             // Maximum safe temperature (°C)
 
 // Timers for update loops
@@ -52,7 +55,8 @@ enum BMSStatus : uint8_t {
   STATUS_DISCHARGED = 4,             // Voltage below minimum safe level
   STATUS_OVERTEMP = 5,               // One or more temperatures exceeded limit
   STATUS_TEMPERATURE_SENSOR_FAIL = 6, // Temperature sensors not responding
-  STATUS_CURRENT_SENSOR_FAIL = 7     // INA228 not responding
+  STATUS_CURRENT_SENSOR_FAIL = 7,    // INA228 not responding
+  STATUS_REMOTE_SHUTDOWN = 8  // Manual shutdown triggered via CAN command
 };
 
 // ============================== GLOBALS ==============================
@@ -153,6 +157,19 @@ void loop() {
   if (currentTime - lastCANSendTime >= CAN_SEND_INTERVAL) {
     lastCANSendTime = currentTime;
     sendCANStatusFrame();
+  }
+  // ==== CAN RECEIVE: Shutdown Command ====
+  twai_message_t incomingMsg;
+  while (twai_receive(&incomingMsg, 0) == ESP_OK) {
+    if (incomingMsg.identifier == CAN_ID_BMS_SHUTDOWN &&
+        incomingMsg.data_length_code >= 1 &&
+        incomingMsg.data[0] == 0x01) {
+
+      Serial.println("Remote shutdown command received over CAN!");
+      digitalWrite(MOSFET_PIN, LOW);
+      emergency_triggered = true;
+      current_status = STATUS_REMOTE_SHUTDOWN;
+    }
   }
 }
 
@@ -260,6 +277,7 @@ void reportEmergencyCause() {
     case STATUS_OVERTEMP: Serial.println("- Overtemperature detected."); break;
     case STATUS_TEMPERATURE_SENSOR_FAIL: Serial.println("- Lost temperature sensor(s)."); break;
     case STATUS_CURRENT_SENSOR_FAIL: Serial.println("- INA228 disconnected."); break;
+    case STATUS_REMOTE_SHUTDOWN: Serial.println("- Remote shutdown via CAN command."); break;
     default: Serial.println("- Unknown emergency state."); break;
   }
   Serial.println("Power is disabled.\n--------------------");
