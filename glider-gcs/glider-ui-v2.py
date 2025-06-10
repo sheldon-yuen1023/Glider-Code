@@ -5,6 +5,7 @@ import json
 import serial
 import time
 from time import time as current_time  # High-resolution timestamp
+import csv
 
 # === Configuration ===
 COM_PORT = 'COM18'    # CANoverSerial bridge port
@@ -41,6 +42,18 @@ telemetry = {
     'rollPos':     "N/A",
     'bms':         "N/A",  # Only show BMS2 as "bms"
 }
+
+# -----------------------------------------------------------
+# CSV Logging Setup (in Downloads folder)
+# -----------------------------------------------------------
+csv_file = open(r'C:\Users\zhara\Downloads\telemetry_log.csv', mode='w', newline='')
+csv_writer = csv.writer(csv_file)
+csv_writer.writerow([
+    'timestamp', 'depth', 'pitch', 'rolssl', 'yaw',
+    'floor_dist', 'leak', 'vbd1', 'vbd2',
+    'pitchPos', 'rollPos', 'bms'
+])
+
 
 # -----------------------------------------------------------
 # Helper: Send a text command over serial with delay logic
@@ -85,6 +98,19 @@ def send_vbd():
     state = vbd_state.get()
     cmd = f"VBD,{state}"
     send_serial_command(cmd)
+
+def send_vbd1():
+
+    state = vbd1_state.get()
+    cmd = f"VBD1,{state}"
+    send_serial_command(cmd)
+
+def send_vbd2():
+    """Send a VBD2 command: 'VBD2,IN/MID/OUT'."""
+    state = vbd2_state.get()
+    cmd = f"VBD2,{state}"
+    send_serial_command(cmd)
+
 
 def stop_vbd():
     """Send a VBD STOP command: 'VBD,STOP'."""
@@ -206,6 +232,22 @@ def serial_listener():
                     telemetry['bms'] = "; ".join(parts)
                 else:
                     telemetry['bms'] = "N/A"
+
+            # ← INSERT CSV LOGGING HERE →
+            csv_writer.writerow([
+                time.strftime("%Y-%m-%d %H:%M:%S"),  # Timestamp
+                telemetry['depth'],
+                telemetry['pitch'],
+                telemetry['roll'],
+                telemetry['yaw'],
+                telemetry['floor_dist'],
+                telemetry['leak'],
+                telemetry['vbd1'],
+                telemetry['vbd2'],
+                telemetry['pitchPos'],
+                telemetry['rollPos'],
+                telemetry['bms']
+            ])
 
             # Record the time telemetry was received
             last_telemetry_time = current_time()
@@ -352,6 +394,44 @@ btn_zero_vbd = ttk.Button(
 )
 btn_zero_vbd.grid(row=6, column=0, columnspan=2, pady=(0, 10))
 
+# Manual VBD1 control
+ttk.Label(frame_control, text="VBD1 State:").grid(row=7, column=0, sticky="e", padx=5, pady=2)
+vbd1_state = tk.StringVar(value="IN")
+combo_vbd1 = ttk.Combobox(
+    frame_control,
+    textvariable=vbd1_state,
+    values=["IN", "MID", "OUT"],
+    state="readonly",
+    width=8
+)
+combo_vbd1.grid(row=7, column=1, padx=5, pady=2)
+
+btn_set_vbd1 = ttk.Button(
+    frame_control,
+    text="Set VBD1",
+    command=send_vbd1
+)
+btn_set_vbd1.grid(row=8, column=0, columnspan=2, pady=5)
+
+# Manual VBD2 control
+ttk.Label(frame_control, text="VBD2 State:").grid(row=9, column=0, sticky="e", padx=5, pady=2)
+vbd2_state = tk.StringVar(value="IN")
+combo_vbd2 = ttk.Combobox(
+    frame_control,
+    textvariable=vbd2_state,
+    values=["IN", "MID", "OUT"],
+    state="readonly",
+    width=8
+)
+combo_vbd2.grid(row=9, column=1, padx=5, pady=2)
+
+btn_set_vbd2 = ttk.Button(
+    frame_control,
+    text="Set VBD2",
+    command=send_vbd2
+)
+btn_set_vbd2.grid(row=10, column=0, columnspan=2, pady=5)
+
 # --- Mission Parameters Frame ---
 frame_mission = ttk.Frame(root, relief="ridge")
 frame_mission.grid(row=1, column=1, sticky="nsew", padx=10, pady=5)
@@ -443,6 +523,7 @@ def update_telemetry_labels():
 def on_closing():
     if messagebox.askokcancel("Quit", "Do you really want to quit?"):
         root.destroy()
+        csv_file.close()    # ← CLOSE YOUR LOG HERE
 
 root.protocol("WM_DELETE_WINDOW", on_closing)
 
