@@ -151,7 +151,7 @@ void loop() {
         break;
       case 2:  // VBD,MID
         Serial.println("CAN → Move to midpoint.");
-        moveToPosition(maxPos / 2);
+        moveToPosition(4 * maxPos / 10);
         break;
       case 3:  // VBD,OUT
         Serial.println("CAN → Move to maxPos.");

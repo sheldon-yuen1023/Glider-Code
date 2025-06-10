@@ -7,11 +7,12 @@ extern HardwareSerial RS485;
 
 // Function to handle the command string
 void handleCommand(String cmd) {
+  Serial.println(cmd);
     // strip whitespace…
   cmd.trim();
 
   // if there’s garbage before “VBD,”, drop it and keep only the real VBD,XYZ
-  int vbdIdx = cmd.lastIndexOf("VBD,");
+  int vbdIdx = cmd.lastIndexOf("VBD");
   if (vbdIdx >= 0) {
     cmd = cmd.substring(vbdIdx);
   }
@@ -28,30 +29,60 @@ void handleCommand(String cmd) {
   Serial.print("[RS485 CMD] parsed → ");
   Serial.println(cmd);
 
-  if (cmd.startsWith("VBD,")) {
-    String arg = cmd.substring(4);
+  if (cmd.startsWith("VBD1,")) {
+    String arg = cmd.substring(cmd.indexOf(',') + 1);  // after the comma
     uint8_t command = 0;
-
-    if (arg == "IN")      command = 1;
+    if      (arg == "IN")   command = 1;
     else if (arg == "MID")  command = 2;
     else if (arg == "OUT")  command = 3;
     else if (arg == "ZERO") command = 4;
     else if (arg == "STOP") command = 5;
-    else return;  // Unknown command
+    else return;  // unknown
 
-    // Send to both VBDs
-    sendVBDCommand(0, command);  // VBD1
-    Serial.printf("[DEBUG] Forwarded VBD command %d to VBD1\n", command);
-
-    sendVBDCommand(1, command);  // VBD2
-    Serial.printf("[DEBUG] Forwarded VBD command %d to VBD2\n", command);
+    sendVBDCommand(0, command);  // only VBD1
+    Serial.printf("[DEBUG] VBD1 → %u\n", command);
+    return;
   }
-  else if (cmd == "BATT_OFF") {
-  // send a remote shutdown to BMS
-  sendBMSShutdown();
-  Serial.println("[DEBUG] Forwarded BATT_OFF → BMS shutdown (CAN 0x210, data 0x01)");
-}
-  // TODO: Handle other command types here
+
+  // 2) VBD2-specific commands
+  if (cmd.startsWith("VBD2,")) {
+    String arg = cmd.substring(cmd.indexOf(',') + 1);
+    uint8_t command = 0;
+    if      (arg == "IN")   command = 1;
+    else if (arg == "MID")  command = 2;
+    else if (arg == "OUT")  command = 3;
+    else if (arg == "ZERO") command = 4;
+    else if (arg == "STOP") command = 5;
+    else return;
+
+    sendVBDCommand(1, command);  // only VBD2
+    Serial.printf("[DEBUG] VBD2 → %u\n", command);
+    return;
+  }
+
+  // 3) Broadcast to both VBDs
+  if (cmd.startsWith("VBD,")) {
+    String arg = cmd.substring(cmd.indexOf(',') + 1);
+    uint8_t command = 0;
+    if      (arg == "IN")   command = 1;
+    else if (arg == "MID")  command = 2;
+    else if (arg == "OUT")  command = 3;
+    else if (arg == "ZERO") command = 4;
+    else if (arg == "STOP") command = 5;
+    else return;
+
+    sendVBDCommand(0, command);
+    sendVBDCommand(1, command);
+    Serial.printf("[DEBUG] VBD ALL → %u\n", command);
+    return;
+  }
+
+  // 4) BATT_OFF stays the same
+  if (cmd == "BATT_OFF") {
+    sendBMSShutdown();
+    Serial.println("[DEBUG] Forwarded BATT_OFF → BMS shutdown");
+    return;
+  }
 }
 
 void CommandReceiveTask(void* param) {
