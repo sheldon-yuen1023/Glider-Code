@@ -4,8 +4,8 @@
 
 // === RS485 UART Setup (UART2) ===
 HardwareSerial UART_RS485(2); // UART2 on ESP32
-#define RS485_TX 17
-#define RS485_RX 18
+#define RS485_TX 9
+#define RS485_RX 46
 
 void setup() {
   Serial.begin(115200); // USB serial for debugging
